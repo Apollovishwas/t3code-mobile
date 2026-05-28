@@ -40,6 +40,25 @@ brew install --cask t3-code
 yay -S t3code-bin
 ```
 
+## Configuration
+
+`t3` resolves its settings in this precedence order (top wins):
+
+1. **Command-line flags** — e.g., `t3 start --port 4000 --base-dir ~/my-t3`. Run `t3 --help` for the full list.
+2. **Environment variables** —
+   - `T3_DISABLE_UPDATE_CHECK=1` skips the once-per-startup npm registry version probe (useful for air-gapped installs).
+   - Other config knobs are surfaced as CLI flags first; envs are added on demand.
+3. **State directory contents** under `<base-dir>` (default `~/.t3/`):
+   - `state.sqlite` — projection + projection cache. Backed up before each migration as `state.sqlite.backup-<timestamp>`.
+   - `secrets/push-vapid.json` — Web Push VAPID keypair (auto-generated on first run, `chmod 600`-equivalent).
+   - `settings.json`, `keybindings.json` — UI settings.
+   - `logs/` — log files used by `t3 diagnose`.
+4. **Built-in defaults** — sensible localhost-only values designed for a single-user self-hosted install.
+
+If you're stuck, `t3 diagnose --state-dir ~/.t3` prints a copy-pasteable diagnostic block (version, runtime, migration head, log tail). Paste it into an issue if anything looks wrong.
+
+`GET /health` (unauthenticated) returns `{status, version, uptimeSeconds, dbMigrationHead, nodeVersion}` — handy for Tailscale serve / systemd / container liveness probes.
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.

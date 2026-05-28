@@ -302,9 +302,12 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       if (!indexData) {
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
+      // SPA fallback always returns index.html — never cache it, so clients
+      // always pick up the latest hashed asset references after a deploy.
       return HttpServerResponse.uint8Array(indexData, {
         status: 200,
         contentType: "text/html; charset=utf-8",
+        headers: { "Cache-Control": "no-cache" },
       });
     }
 
@@ -316,9 +319,15 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       return HttpServerResponse.text("Internal Server Error", { status: 500 });
     }
 
+    // Hashed build assets are immutable; HTML and the service worker must
+    // revalidate so deploys take effect on next load (critical for the PWA).
+    const isHashedAsset = url.value.pathname.startsWith("/assets/");
+    const cacheControl = isHashedAsset ? "public, max-age=31536000, immutable" : "no-cache";
+
     return HttpServerResponse.uint8Array(data, {
       status: 200,
       contentType,
+      headers: { "Cache-Control": cacheControl },
     });
   }),
 );

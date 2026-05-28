@@ -1,11 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { NoActiveThreadState } from "../components/NoActiveThreadState";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { useSavedEnvironmentRegistryStore } from "../environments/runtime";
+import { selectSidebarThreadsAcrossEnvironments, useStore } from "../store";
 import { APP_DISPLAY_NAME } from "~/branding";
 
 function ChatIndexRouteView() {
@@ -13,6 +16,37 @@ function ChatIndexRouteView() {
   const savedEnvironmentCount = useSavedEnvironmentRegistryStore(
     (state) => Object.keys(state.byId).length,
   );
+  const navigate = useNavigate();
+  const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+
+  // "Always open the last chatted thread": redirect the index to the most
+  // recently active (non-archived) thread once threads have hydrated.
+  const mostRecentThread = useMemo(() => {
+    let best: (typeof threads)[number] | undefined;
+    let bestKey = "";
+    for (const thread of threads) {
+      if (thread.archivedAt) continue;
+      const key = thread.updatedAt ?? thread.createdAt;
+      if (best === undefined || key.localeCompare(bestKey) > 0) {
+        best = thread;
+        bestKey = key;
+      }
+    }
+    return best;
+  }, [threads]);
+
+  useEffect(() => {
+    if (mostRecentThread) {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: mostRecentThread.environmentId,
+          threadId: mostRecentThread.id,
+        },
+        replace: true,
+      });
+    }
+  }, [mostRecentThread, navigate]);
 
   if (authGateState.status === "hosted-static" && savedEnvironmentCount === 0) {
     return <HostedStaticOnboardingState />;

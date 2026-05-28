@@ -74,6 +74,67 @@ jobs:
           test -f apps/desktop/dist-electron/preload.cjs
           grep -nE "desktopBridge|getLocalEnvironmentBootstrap|PICK_FOLDER_CHANNEL|wsUrl" apps/desktop/dist-electron/preload.cjs
 
+  npm_pack_smoke:
+    name: npm pack smoke
+    # Verifies that the published tarball is well-formed and the
+    # installed binary actually runs. This catches "missing file in
+    # `files:`", broken bin shebang, accidental TypeScript leak into
+    # the published shape, and broken catalog-resolution before
+    # anyone hits `npm install -g t3`.
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build server package (tsdown + bundle web)
+        run: bun run --cwd apps/server build
+
+      - name: Pack the tarball
+        id: pack
+        run: |
+          cd apps/server
+          npm pack --json > /tmp/pack.json
+          TARBALL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/tmp/pack.json","utf8"))[0].filename)')
+          echo "tarball=apps/server/$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect tarball contents
+        run: |
+          cd apps/server
+          TARBALL=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/tmp/pack.json","utf8"))[0].filename)')
+          tar tzf "$TARBALL" | tee /tmp/tarball-listing.txt
+          # Required entries — fail the job if any are missing.
+          for required in package/dist/bin.mjs package/dist/client/index.html package/README.md package/LICENSE package/CHANGELOG.md; do
+            if ! grep -qE "^$required$" /tmp/tarball-listing.txt; then
+              echo "::error::Required file missing from npm tarball: $required"
+              exit 1
+            fi
+          done
+
+      - name: Smoke-install + run --version in a temp dir
+        run: |
+          TMPDIR=$(mktemp -d)
+          cd "$TMPDIR"
+          npm init -y > /dev/null
+          npm install "$GITHUB_WORKSPACE/${{ steps.pack.outputs.tarball }}" \
+            --no-audit --no-fund --silent
+          ./node_modules/.bin/t3 --version
+          ./node_modules/.bin/t3 --help | head -40
+          ./node_modules/.bin/t3 diagnose --tail-log-lines 5 | head -25
+
   release_smoke:
     name: Release Smoke
     runs-on: blacksmith-8vcpu-ubuntu-2404

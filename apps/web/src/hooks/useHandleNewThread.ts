@@ -37,6 +37,8 @@ function useNewThreadState() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        resumeSessionId?: string;
+        resumeSessionTitle?: string;
       },
     ): Promise<void> => {
       const {
@@ -76,6 +78,10 @@ function useNewThreadState() {
           }
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, storedDraftThread.draftId, {
             threadId: storedDraftThread.threadId,
+            ...(options?.resumeSessionId ? { resumeSessionId: options.resumeSessionId } : {}),
+            ...(options?.resumeSessionTitle
+              ? { resumeSessionTitle: options.resumeSessionTitle }
+              : {}),
           });
           if (
             currentRouteTarget?.kind === "draft" &&
@@ -111,6 +117,10 @@ function useNewThreadState() {
           ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
           ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+          ...(options?.resumeSessionId ? { resumeSessionId: options.resumeSessionId } : {}),
+          ...(options?.resumeSessionTitle
+            ? { resumeSessionTitle: options.resumeSessionTitle }
+            : {}),
         });
         return Promise.resolve();
       }
@@ -126,6 +136,10 @@ function useNewThreadState() {
           worktreePath: options?.worktreePath ?? null,
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
+          ...(options?.resumeSessionId ? { resumeSessionId: options.resumeSessionId } : {}),
+          ...(options?.resumeSessionTitle
+            ? { resumeSessionTitle: options.resumeSessionTitle }
+            : {}),
         });
         applyStickyState(draftId);
 

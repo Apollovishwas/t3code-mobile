@@ -88,6 +88,36 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
+import { PushNotificationsLive } from "./push/Layers/PushNotifications.ts";
+import { PushNotificationReactorLive } from "./push/Layers/PushNotificationReactor.ts";
+import { AutomationSchedulerLive } from "./automation/Layers/AutomationScheduler.ts";
+import { AutomationRepositoryLive } from "./persistence/Layers/Automations.ts";
+import { KanbanRepositoryLive } from "./persistence/Layers/KanbanBoard.ts";
+import {
+  kanbanAddNoteRouteLayer,
+  kanbanAttachArtifactRouteLayer,
+  kanbanBindThreadRouteLayer,
+  kanbanCreateCardRouteLayer,
+  kanbanDeleteCardRouteLayer,
+  kanbanListRouteLayer,
+  kanbanMoveCardRouteLayer,
+  kanbanProjectsRouteLayer,
+  kanbanRunCardRouteLayer,
+  kanbanScheduleCardRouteLayer,
+  kanbanUnscheduleCardRouteLayer,
+  kanbanUpdateCardRouteLayer,
+} from "./kanban/http.ts";
+import { healthRouteLayer } from "./health/http.ts";
+import {
+  pushPublicKeyRouteLayer,
+  pushSubscribeRouteLayer,
+  pushUnsubscribeRouteLayer,
+} from "./push/http.ts";
+import {
+  claudeSessionDeleteRouteLayer,
+  claudeSessionFoldersRouteLayer,
+  claudeSessionsRouteLayer,
+} from "./claudeSessions/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 
@@ -145,6 +175,16 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
+  Layer.provideMerge(PushNotificationReactorLive),
+  // Scheduled automations: a small forked-scoped fiber that ticks the
+  // AutomationRepository every 30s and dispatches due rows through the
+  // same turn-start path a user-initiated send uses.
+  Layer.provideMerge(AutomationSchedulerLive),
+  Layer.provideMerge(AutomationRepositoryLive),
+  // Kanban board — read-only on the client, mutated only by the Agent SDK
+  // tool surface. See `apps/server/src/kanban/` for the tool layer that
+  // calls into this repository.
+  Layer.provideMerge(KanbanRepositoryLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -276,6 +316,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(RepositoryIdentityResolverLive),
   Layer.provideMerge(ServerEnvironmentLive),
   Layer.provideMerge(AuthLayerLive),
+  Layer.provideMerge(PushNotificationsLive),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
@@ -307,6 +348,27 @@ export const makeRoutesLayer = Layer.mergeAll(
   attachmentsRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
+  pushPublicKeyRouteLayer,
+  pushSubscribeRouteLayer,
+  pushUnsubscribeRouteLayer,
+  claudeSessionFoldersRouteLayer,
+  claudeSessionsRouteLayer,
+  claudeSessionDeleteRouteLayer,
+  // Kanban board mutation endpoints — called by Claude via Bash + curl
+  // (the agent gets the URL set via the system prompt).
+  healthRouteLayer,
+  kanbanProjectsRouteLayer,
+  kanbanListRouteLayer,
+  kanbanCreateCardRouteLayer,
+  kanbanRunCardRouteLayer,
+  kanbanMoveCardRouteLayer,
+  kanbanUpdateCardRouteLayer,
+  kanbanDeleteCardRouteLayer,
+  kanbanAddNoteRouteLayer,
+  kanbanAttachArtifactRouteLayer,
+  kanbanBindThreadRouteLayer,
+  kanbanScheduleCardRouteLayer,
+  kanbanUnscheduleCardRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,

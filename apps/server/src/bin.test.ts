@@ -10,6 +10,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as CliError from "effect/unstable/cli/CliError";
@@ -33,8 +34,26 @@ import {
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { KanbanRepository } from "./persistence/Services/KanbanBoard.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+// The CLI test runtime mocks the Kanban services because some CLI commands
+// transitively pull in the provider driver layer whose env now declares
+// these as dependencies (the per-turn board context lookup). These tests
+// don't exercise that code path; the empty implementations satisfy the
+// compiler without changing behaviour.
+const KanbanTestMocks = Layer.mergeAll(
+  Layer.mock(KanbanRepository)({
+    listByProject: () => Effect.succeed([]),
+  }),
+  Layer.mock(ProjectionSnapshotQuery)({
+    getThreadShellById: () => Effect.succeed(Option.none()),
+  }),
+);
+const CliRuntimeLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  KanbanTestMocks,
+);
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>

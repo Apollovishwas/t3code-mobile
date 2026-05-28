@@ -383,7 +383,7 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  it("keeps healthy environment streams connected when the browser resumes from the background", async () => {
+  it("force-reconnects on visibility resume even when the heartbeat looks fresh (iOS zombie-WS guard)", async () => {
     let visibilityState: DocumentVisibilityState = "visible";
     const documentTarget = new EventTarget();
     const windowTarget = new EventTarget();
@@ -409,9 +409,13 @@ describe("retainThreadDetailSubscription", () => {
     documentTarget.dispatchEvent(new Event("visibilitychange"));
     expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
 
+    // iOS can silently kill the WS while the page is hidden but leave the
+    // last-pong timestamp looking fresh. Visibility-resume must force a
+    // reconnect regardless of `isHeartbeatFresh`, or the user sends into a
+    // zombie socket on return and the UI hangs at "working".
     visibilityState = "visible";
     documentTarget.dispatchEvent(new Event("visibilitychange"));
-    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+    expect(mockConnectionReconnects[0]).toHaveBeenCalledTimes(1);
 
     stop();
     await resetEnvironmentServiceForTests();

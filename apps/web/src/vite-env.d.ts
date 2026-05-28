@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_HOSTED_APP_URL: string;
   readonly VITE_HOSTED_APP_CHANNEL: string;
   readonly APP_VERSION: string;
+  /** Per-deploy build counter, injected by vite.config.ts from $BUILD_ID. */
+  readonly BUILD_ID: string;
 }
 
 interface ImportMeta {

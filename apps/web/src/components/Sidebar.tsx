@@ -4,6 +4,8 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  HistoryIcon,
+  KanbanSquareIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -18,6 +20,7 @@ import {
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { ResumeClaudeSessionDialog } from "./ResumeClaudeSessionDialog";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -174,6 +177,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
+import { BuildBadge } from "./BuildBadge";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
@@ -2495,6 +2499,12 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     }
     void navigate({ to: "/settings" });
   }, [isMobile, navigate, setOpenMobile]);
+  const handleBoardClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/board" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   return (
     <SidebarFooter className="p-2">
@@ -2505,10 +2515,23 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
           <SidebarMenuButton
             size="sm"
             className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleBoardClick}
+          >
+            <KanbanSquareIcon className="size-3.5" />
+            <span className="text-xs">Board</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
             onClick={handleSettingsClick}
           >
             <SettingsIcon className="size-3.5" />
             <span className="text-xs">Settings</span>
+            <span className="ml-auto">
+              <BuildBadge />
+            </span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -2528,6 +2551,7 @@ interface SidebarProjectsContentProps {
   threadPreviewCount: SidebarThreadPreviewCount;
   updateSettings: ReturnType<typeof useUpdateSettings>["updateSettings"];
   openAddProject: () => void;
+  onResumeSession: () => void;
   isManualProjectSorting: boolean;
   projectDnDSensors: ReturnType<typeof useSensors>;
   projectCollisionDetection: CollisionDetection;
@@ -2569,6 +2593,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     threadPreviewCount,
     updateSettings,
     openAddProject,
+    onResumeSession,
     isManualProjectSorting,
     projectDnDSensors,
     projectCollisionDetection,
@@ -2700,6 +2725,22 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               </TooltipTrigger>
               <TooltipPopup side="right">Add project</TooltipPopup>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Resume a Claude session"
+                    data-testid="sidebar-resume-session-trigger"
+                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={onResumeSession}
+                  />
+                }
+              >
+                <HistoryIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Resume a Claude session</TooltipPopup>
+            </Tooltip>
           </div>
         </div>
 
@@ -2811,6 +2852,7 @@ export default function Sidebar() {
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const keybindings = useServerKeybindings();
   const openAddProjectCommandPalette = useCommandPaletteStore((store) => store.openAddProject);
+  const [resumeSessionDialogOpen, setResumeSessionDialogOpen] = useState(false);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -3432,6 +3474,7 @@ export default function Sidebar() {
             threadPreviewCount={sidebarThreadPreviewCount}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}
+            onResumeSession={() => setResumeSessionDialogOpen(true)}
             isManualProjectSorting={isManualProjectSorting}
             projectDnDSensors={projectDnDSensors}
             projectCollisionDetection={projectCollisionDetection}
@@ -3462,6 +3505,10 @@ export default function Sidebar() {
           <SidebarChromeFooter />
         </>
       )}
+      <ResumeClaudeSessionDialog
+        open={resumeSessionDialogOpen}
+        onOpenChange={setResumeSessionDialogOpen}
+      />
     </>
   );
 }

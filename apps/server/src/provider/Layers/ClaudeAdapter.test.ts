@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Option from "effect/Option";
 import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
@@ -35,6 +36,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { KanbanRepository } from "../../persistence/Services/KanbanBoard.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -198,6 +201,18 @@ function makeHarness(config?: {
         ),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      // Stubbed for the per-turn board context — these tests don't
+      // exercise the Kanban surface, just need the dependencies satisfied.
+      Layer.provide(
+        Layer.mock(ProjectionSnapshotQuery)({
+          getThreadShellById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(KanbanRepository)({
+          listByProject: () => Effect.succeed([]),
+        }),
+      ),
       Layer.provideMerge(NodeServices.layer),
     ),
     query,
@@ -1357,6 +1372,16 @@ describe("ClaudeAdapterLive", () => {
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provide(
+        Layer.mock(ProjectionSnapshotQuery)({
+          getThreadShellById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(KanbanRepository)({
+          listByProject: () => Effect.succeed([]),
+        }),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -1448,6 +1473,16 @@ describe("ClaudeAdapterLive", () => {
     ).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provide(
+        Layer.mock(ProjectionSnapshotQuery)({
+          getThreadShellById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(KanbanRepository)({
+          listByProject: () => Effect.succeed([]),
+        }),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
 

@@ -13,6 +13,11 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+// Pixel-art monster pack from craftpix.net used by the working mascot.
+export const MascotCharacter = Schema.Literals(["pink", "owlet", "dude"]);
+export type MascotCharacter = typeof MascotCharacter.Type;
+export const DEFAULT_MASCOT_CHARACTER: MascotCharacter = "pink";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -40,6 +45,19 @@ export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
 export const ClientSettingsSchema = Schema.Struct({
+  // Per-device: show a browser/OS notification when an agent finishes a turn
+  // while the app is backgrounded. Off by default; enabling it prompts for the
+  // OS notification permission.
+  agentCompletionNotifications: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  // Per-device: while a turn is running on a phone, replace the composer with
+  // a tiny animated mascot. Tap the mascot to bring the composer back. Off by
+  // default; opt-in via Settings → General.
+  mascotProcessingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  mascotCharacter: MascotCharacter.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MASCOT_CHARACTER)),
+  ),
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -475,6 +493,9 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  agentCompletionNotifications: Schema.optionalKey(Schema.Boolean),
+  mascotProcessingEnabled: Schema.optionalKey(Schema.Boolean),
+  mascotCharacter: Schema.optionalKey(MascotCharacter),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

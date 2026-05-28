@@ -84,6 +84,11 @@ export default defineConfig({
     "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
     "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
     "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+    // Per-deploy build counter — set via the BUILD_ID env var when we
+    // run `bun run build`. Lets the PWA render a tiny badge so the user
+    // can see at a glance which deploy they're on, useful for debugging
+    // "did my cache pick up the new bundle?" without devtools.
+    "import.meta.env.BUILD_ID": JSON.stringify(process.env.BUILD_ID ?? ""),
   },
   resolve: {
     tsconfigPaths: true,

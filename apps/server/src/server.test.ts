@@ -56,6 +56,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import { PushNotifications } from "./push/Services/PushNotifications.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -114,6 +115,9 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { AutomationRepository } from "./persistence/Services/Automations.ts";
+import { AutomationScheduler } from "./automation/Services/AutomationScheduler.ts";
+import { KanbanRepository } from "./persistence/Services/KanbanBoard.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -546,6 +550,14 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(PushNotifications)({
+          publicKey: Effect.succeed("test-vapid-public-key"),
+          subscribe: () => Effect.void,
+          unsubscribe: () => Effect.void,
+          broadcast: () => Effect.void,
+        }),
+      ),
+      Layer.provide(
         Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({
           read: Effect.succeed({
             serverPid: process.pid,
@@ -687,6 +699,45 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      // Scheduled-automations services — mocked out since this test
+      // suite predates the feature and doesn't exercise the dispatcher.
+      // Empty list / runNow / etc. is enough to satisfy ws.ts's
+      // requirements without dragging in the full scheduler graph.
+      Layer.provide(
+        Layer.mock(AutomationRepository)({
+          listAll: () => Effect.succeed([]),
+          listByProject: () => Effect.succeed([]),
+          getById: () => Effect.succeed(Option.none()),
+          insert: () => Effect.void,
+          update: () => Effect.void,
+          deleteById: () => Effect.succeed(false),
+          listDue: () => Effect.succeed([]),
+          markFired: () => Effect.void,
+          markFailed: () => Effect.void,
+          appendRun: () => Effect.void,
+          listRecentRuns: () => Effect.succeed([]),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(AutomationScheduler)({
+          start: () => Effect.void,
+          runNow: () => Effect.succeed({ outcome: "fired", detail: null }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(KanbanRepository)({
+          insertCard: () => Effect.void,
+          updateCard: () => Effect.void,
+          deleteCard: () => Effect.succeed(false),
+          getCard: () => Effect.succeed(Option.none()),
+          listByProject: () => Effect.succeed([]),
+          getCardByThread: () => Effect.succeed(Option.none()),
+          insertArtifact: () => Effect.void,
+          listArtifactsByCard: () => Effect.succeed([]),
+          insertNote: () => Effect.void,
+          listNotesByCard: () => Effect.succeed([]),
+        }),
+      ),
       Layer.provide(
         Layer.mock(BrowserTraceCollector)({
           record: () => Effect.void,

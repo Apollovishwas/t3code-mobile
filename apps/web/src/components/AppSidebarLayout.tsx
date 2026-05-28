@@ -11,6 +11,17 @@ import {
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
+
+/**
+ * Minimum width the main content must keep when resizing the sidebar. On wide
+ * (desktop) viewports this is the full 40rem; on narrower tablet/iPad widths it
+ * scales down so the sidebar remains shrinkable instead of being locked at its
+ * default width (the fixed 40rem would otherwise leave less than the sidebar's
+ * own minimum, rejecting every drag width).
+ */
+function mainContentMinWidth(wrapperWidth: number): number {
+  return Math.min(THREAD_MAIN_CONTENT_MIN_WIDTH, wrapperWidth * 0.55);
+}
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
 
@@ -54,7 +65,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   return (
-    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen>
+    <SidebarProvider className="h-[calc(100dvh-var(--keyboard-inset,0px))]! min-h-0!" defaultOpen>
       <Sidebar
         side="left"
         collapsible="offcanvas"
@@ -62,7 +73,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>
-            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+            wrapper.clientWidth - nextWidth >= mainContentMinWidth(wrapper.clientWidth),
           storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >

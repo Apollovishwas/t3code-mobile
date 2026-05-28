@@ -153,6 +153,20 @@ export interface WsRpcClient {
     readonly subscribeShell: RpcStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeShell>;
     readonly subscribeThread: RpcInputStreamMethod<typeof ORCHESTRATION_WS_METHODS.subscribeThread>;
   };
+  readonly automations: {
+    readonly list: RpcUnaryNoArgMethod<typeof WS_METHODS.automationsList>;
+    readonly create: RpcUnaryMethod<typeof WS_METHODS.automationsCreate>;
+    readonly update: RpcUnaryMethod<typeof WS_METHODS.automationsUpdate>;
+    readonly delete: RpcUnaryMethod<typeof WS_METHODS.automationsDelete>;
+    readonly runNow: RpcUnaryMethod<typeof WS_METHODS.automationsRunNow>;
+    readonly recentRuns: RpcUnaryMethod<typeof WS_METHODS.automationsRecentRuns>;
+  };
+  readonly kanban: {
+    readonly listByProject: RpcUnaryMethod<typeof WS_METHODS.kanbanListByProject>;
+    readonly getCard: RpcUnaryMethod<typeof WS_METHODS.kanbanGetCard>;
+    readonly listArtifacts: RpcUnaryMethod<typeof WS_METHODS.kanbanListArtifacts>;
+    readonly listNotes: RpcUnaryMethod<typeof WS_METHODS.kanbanListNotes>;
+  };
 }
 
 export function createWsRpcClient(transport: WsTransport): WsRpcClient {
@@ -318,6 +332,29 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           listener,
           { ...options, tag: ORCHESTRATION_WS_METHODS.subscribeThread },
         ),
+    },
+    automations: {
+      list: () => transport.request((client) => client[WS_METHODS.automationsList]({})),
+      create: (input) =>
+        transport.request((client) => client[WS_METHODS.automationsCreate](input)),
+      update: (input) =>
+        transport.request((client) => client[WS_METHODS.automationsUpdate](input)),
+      delete: (input) =>
+        transport.request((client) => client[WS_METHODS.automationsDelete](input)),
+      runNow: (input) =>
+        transport.request((client) => client[WS_METHODS.automationsRunNow](input)),
+      recentRuns: (input) =>
+        transport.request((client) => client[WS_METHODS.automationsRecentRuns](input)),
+    },
+    kanban: {
+      listByProject: (input) =>
+        transport.request((client) => client[WS_METHODS.kanbanListByProject](input)),
+      getCard: (input) =>
+        transport.request((client) => client[WS_METHODS.kanbanGetCard](input)),
+      listArtifacts: (input) =>
+        transport.request((client) => client[WS_METHODS.kanbanListArtifacts](input)),
+      listNotes: (input) =>
+        transport.request((client) => client[WS_METHODS.kanbanListNotes](input)),
     },
   };
 }

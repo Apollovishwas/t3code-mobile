@@ -41,6 +41,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
+import { getWsConnectionUiState, useWsConnectionStatus } from "../rpc/wsConnectionState";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -104,7 +105,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, HistoryIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -686,13 +687,25 @@ export default function ChatView(props: ChatViewProps) {
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  // True while the working-mascot band is on screen (mobile only, while a
+  // turn is running and the user hasn't tapped to bring the composer back).
+  // Lets us hide sibling chrome — branch toolbar, environment dropdown — so
+  // the mascot is the only thing visible until the turn ends or is tapped.
+  const [isMascotActive, setIsMascotActive] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
-  const [isConnecting, _setIsConnecting] = useState(false);
+  // Surface the real WebSocket connection state so the composer disables sends
+  // and the reconnecting banner shows while the WS is (re)establishing — a
+  // never-set `useState(false)` used to leave this gated off even after the
+  // iOS zombie-WS guard forced a reconnect.
+  const wsConnectionStatus = useWsConnectionStatus();
+  const wsConnectionUiState = getWsConnectionUiState(wsConnectionStatus);
+  const isConnecting =
+    wsConnectionUiState === "connecting" || wsConnectionUiState === "reconnecting";
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -2838,6 +2851,9 @@ export default function ChatView(props: ChatViewProps) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
+                      ...(draftThread?.resumeSessionId
+                        ? { resumeSessionId: draftThread.resumeSessionId }
+                        : {}),
                     },
                   }
                 : {}),
@@ -3552,6 +3568,44 @@ export default function ChatView(props: ChatViewProps) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {isConnecting ? (
+              <div
+                className="shrink-0 px-4 pt-3"
+                role="status"
+                aria-live="polite"
+                aria-label="Reconnecting to server"
+              >
+                <div className="mx-auto flex w-full max-w-208 items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-foreground">
+                  <span
+                    className="inline-block size-3 shrink-0 animate-spin rounded-full border-2 border-amber-500/40 border-t-amber-500"
+                    aria-hidden
+                  />
+                  <span className="min-w-0 truncate">
+                    {wsConnectionUiState === "reconnecting" ? "Reconnecting…" : "Connecting…"}
+                    <span className="ml-1 text-muted-foreground">sending is paused</span>
+                  </span>
+                </div>
+              </div>
+            ) : null}
+            {isLocalDraftThread && draftThread?.resumeSessionId ? (
+              <div className="shrink-0 px-4 pt-3">
+                <div className="mx-auto flex w-full max-w-208 items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+                  <HistoryIcon className="size-3.5 shrink-0" aria-hidden />
+                  <span className="min-w-0 truncate">
+                    Resuming Claude session
+                    {draftThread.resumeSessionTitle ? (
+                      <>
+                        {": "}
+                        <span className="font-medium text-foreground">
+                          {draftThread.resumeSessionTitle}
+                        </span>
+                      </>
+                    ) : null}
+                    . Prior context is loaded; your first message continues it.
+                  </span>
+                </div>
+              </div>
+            ) : null}
             {/* Messages — LegendList handles virtualization and scrolling internally */}
             <MessagesTimeline
               key={activeThread.id}
@@ -3676,10 +3730,11 @@ export default function ChatView(props: ChatViewProps) {
                   scheduleComposerFocus={scheduleComposerFocus}
                   setThreadError={setThreadError}
                   onExpandImage={onExpandTimelineImage}
+                  onMascotActiveChange={setIsMascotActive}
                 />
               </div>
             </div>
-            {isGitRepo && (
+            {isGitRepo && !isMascotActive && (
               <BranchToolbar
                 environmentId={activeThread.environmentId}
                 threadId={activeThread.id}

@@ -1,7 +1,9 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -12,6 +14,9 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   type AuthAccessStreamEvent,
   AuthSessionId,
+  AutomationAction,
+  AutomationId,
+  AutomationSchedule,
   CommandId,
   EventId,
   type OrchestrationCommand,
@@ -65,6 +70,9 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { AutomationRepository } from "./persistence/Services/Automations.ts";
+import { AutomationScheduler } from "./automation/Services/AutomationScheduler.ts";
+import { KanbanRepository } from "./persistence/Services/KanbanBoard.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -157,6 +165,17 @@ function toAuthAccessStreamEvent(
   }
 }
 
+// Module-level Schema encoders for the automations RPC handlers. Using
+// `fromJsonString(X)` and asking Schema to *encode* turns the typed JS
+// object back into a JSON-encoded string — keeps us inside Schema rather
+// than reaching for the language-service-flagged `JSON.stringify`.
+const encodeAutomationSchedule = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(AutomationSchedule),
+);
+const encodeAutomationAction = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(AutomationAction),
+);
+
 const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -182,6 +201,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
+      const automationRepository = yield* AutomationRepository;
+      const automationScheduler = yield* AutomationScheduler;
+      const kanbanRepository = yield* KanbanRepository;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
         Effect.catch((cause) =>
@@ -497,6 +519,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
+              yield* Effect.logInfo("bootstrap thread.create", {
+                threadId: command.threadId,
+                resumeSessionId: bootstrap.createThread.resumeSessionId ?? null,
+                modelSelection: bootstrap.createThread.modelSelection,
+              });
               yield* orchestrationEngine.dispatch({
                 type: "thread.create",
                 commandId: serverCommandId("bootstrap-thread-create"),
@@ -508,6 +535,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                ...(bootstrap.createThread.resumeSessionId
+                  ? { resumeSessionId: bootstrap.createThread.resumeSessionId }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -895,6 +925,189 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             {
               "rpc.aggregate": "server",
             },
+          ),
+        // ----- Scheduled Automations ---------------------------------
+        // CRUD + run-now + recent-runs surface for the Settings panel.
+        // All handlers route through AutomationRepository / Scheduler.
+        [WS_METHODS.automationsList]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.automationsList,
+            automationRepository
+              .listAll({})
+              .pipe(
+                Effect.catchTag("PersistenceSqlError", (cause) =>
+                  Effect.die(cause),
+                ),
+                Effect.catchTag("PersistenceDecodeError", (cause) =>
+                  Effect.die(cause),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.automationsCreate]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.automationsCreate,
+            Effect.gen(function* () {
+              const uuid = yield* Random.nextUUIDv4;
+              const id = AutomationId.make(`auto-${uuid}`);
+              const nowMs = yield* Clock.currentTimeMillis;
+              const nextRunAtMs = input.enabled
+                ? nowMs + input.schedule.minutes * 60_000
+                : null;
+              const scheduleJson = yield* encodeAutomationSchedule(input.schedule);
+              const actionJson = yield* encodeAutomationAction(input.action);
+              yield* automationRepository.insert({
+                id,
+                name: input.name,
+                projectId: input.projectId,
+                status: input.enabled ? "enabled" : "disabled",
+                scheduleJson,
+                actionJson,
+                nextRunAtMs,
+                createdAtMs: nowMs,
+              });
+              const created = yield* automationRepository.getById({ id });
+              return yield* Option.match(created, {
+                onNone: () => Effect.die("Automation vanished after insert"),
+                onSome: Effect.succeed,
+              });
+            }).pipe(
+              Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+              Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.automationsUpdate]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.automationsUpdate,
+            Effect.gen(function* () {
+              const nowMs = yield* Clock.currentTimeMillis;
+              const scheduleJson =
+                input.schedule !== undefined
+                  ? yield* encodeAutomationSchedule(input.schedule)
+                  : undefined;
+              const actionJson =
+                input.action !== undefined
+                  ? yield* encodeAutomationAction(input.action)
+                  : undefined;
+              // When the user toggles enabled back ON without changing the
+              // schedule, we still need to recompute nextRunAtMs from the
+              // existing row's schedule.
+              const existingMinutes =
+                input.enabled === true && input.schedule === undefined
+                  ? yield* automationRepository.getById({ id: input.id }).pipe(
+                      Effect.map((opt) =>
+                        Option.match(opt, {
+                          onNone: () => null,
+                          onSome: (cur) => cur.schedule.minutes,
+                        }),
+                      ),
+                    )
+                  : null;
+              const nextRunAtMs: number | null | undefined =
+                input.enabled === false
+                  ? null
+                  : input.schedule !== undefined
+                    ? nowMs + input.schedule.minutes * 60_000
+                    : existingMinutes !== null
+                      ? nowMs + existingMinutes * 60_000
+                      : undefined;
+              yield* automationRepository.update({
+                id: input.id,
+                ...(input.name !== undefined ? { name: input.name } : {}),
+                ...(input.enabled !== undefined
+                  ? { status: input.enabled ? "enabled" : "disabled" }
+                  : {}),
+                ...(scheduleJson !== undefined ? { scheduleJson } : {}),
+                ...(actionJson !== undefined ? { actionJson } : {}),
+                ...(nextRunAtMs !== undefined ? { nextRunAtMs } : {}),
+              });
+              const after = yield* automationRepository.getById({ id: input.id });
+              return yield* Option.match(after, {
+                onNone: () => Effect.die("Automation not found after update"),
+                onSome: Effect.succeed,
+              });
+            }).pipe(
+              Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+              Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.automationsDelete]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.automationsDelete,
+            automationRepository.deleteById({ id }).pipe(
+              Effect.map((deleted) => ({ deleted })),
+              Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+              Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.automationsRunNow]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.automationsRunNow,
+            automationScheduler.runNow({ id }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.automationsRecentRuns]: ({ id, limit }) =>
+          observeRpcEffect(
+            WS_METHODS.automationsRecentRuns,
+            automationRepository
+              .listRecentRuns({ automationId: id, limit })
+              .pipe(
+                Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+                Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        // ----- Kanban board (read-only RPC; mutations live in the
+        // HTTP API + agent tool layer). The UI just renders. -----------
+        [WS_METHODS.kanbanListByProject]: ({ projectId, column }) =>
+          observeRpcEffect(
+            WS_METHODS.kanbanListByProject,
+            kanbanRepository
+              .listByProject(
+                column !== undefined ? { projectId, column } : { projectId },
+              )
+              .pipe(
+                Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+                Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.kanbanGetCard]: ({ id }) =>
+          observeRpcEffect(
+            WS_METHODS.kanbanGetCard,
+            kanbanRepository
+              .getCard({ id })
+              .pipe(
+                Effect.map((opt) => Option.getOrNull(opt)),
+                Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+                Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.kanbanListArtifacts]: ({ cardId, limit }) =>
+          observeRpcEffect(
+            WS_METHODS.kanbanListArtifacts,
+            kanbanRepository
+              .listArtifactsByCard({ cardId, limit })
+              .pipe(
+                Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+                Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.kanbanListNotes]: ({ cardId, limit }) =>
+          observeRpcEffect(
+            WS_METHODS.kanbanListNotes,
+            kanbanRepository
+              .listNotesByCard({ cardId, limit })
+              .pipe(
+                Effect.catchTag("PersistenceSqlError", (cause) => Effect.die(cause)),
+                Effect.catchTag("PersistenceDecodeError", (cause) => Effect.die(cause)),
+              ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(

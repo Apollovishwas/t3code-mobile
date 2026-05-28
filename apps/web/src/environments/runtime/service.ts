@@ -1477,14 +1477,22 @@ function stopActiveService() {
   activeService = null;
 }
 
-function reconnectEnvironmentConnectionsAfterBrowserResume(reason: string): void {
+function reconnectEnvironmentConnectionsAfterBrowserResume(
+  reason: string,
+  options?: { readonly force?: boolean },
+): void {
   const now = Date.now();
   if (now - lastBrowserResumeReconnectAt < BROWSER_RESUME_RECONNECT_COOLDOWN_MS) {
     return;
   }
 
   for (const connection of environmentConnections.values()) {
-    if (connection.client.isHeartbeatFresh()) {
+    // iOS can silently kill the WS while the page is hidden without firing a
+    // close event, so the cached "last pong" still looks fresh on resume. When
+    // we *know* the page was suspended (visibilitychange / pageshow), force
+    // reconnect to avoid sending into a zombie socket. `online` / `focus` fire
+    // too often to force on every event, so they keep the fresh-skip.
+    if (!options?.force && connection.client.isHeartbeatFresh()) {
       continue;
     }
     lastBrowserResumeReconnectAt = now;
@@ -1510,22 +1518,48 @@ function subscribeBrowserResumeReconnects(): () => void {
     }
     if (document.visibilityState === "visible" && lastBrowserHiddenAt !== null) {
       lastBrowserHiddenAt = null;
-      reconnectEnvironmentConnectionsAfterBrowserResume("visibilitychange");
+      // Force: iOS may have silently killed the WS while we were hidden.
+      reconnectEnvironmentConnectionsAfterBrowserResume("visibilitychange", { force: true });
     }
   };
 
   const handlePageShow = (event: PageTransitionEvent) => {
     if (event.persisted || lastBrowserHiddenAt !== null) {
       lastBrowserHiddenAt = null;
-      reconnectEnvironmentConnectionsAfterBrowserResume("pageshow");
+      reconnectEnvironmentConnectionsAfterBrowserResume("pageshow", { force: true });
     }
+  };
+
+  // Mobile browsers don't always fire visibilitychange on resume (network
+  // flaps, app-switch focus). `online` and `focus` are extra resume signals;
+  // the reconnect helper already cooldown-guards and skips fresh connections,
+  // so these only revive genuinely-stale connections.
+  const handleOnline = () => {
+    reconnectEnvironmentConnectionsAfterBrowserResume("online");
+  };
+  const handleWindowFocus = () => {
+    reconnectEnvironmentConnectionsAfterBrowserResume("focus");
   };
 
   document.addEventListener("visibilitychange", handleVisibilityChange);
   window.addEventListener("pageshow", handlePageShow);
+  window.addEventListener("online", handleOnline);
+  window.addEventListener("focus", handleWindowFocus);
+
+  // Foreground watchdog: poll heartbeat freshness periodically. Catches a WS
+  // that dies mid-session (network flap, server restart) without a visibility
+  // event firing — without this, the UI would sit on "working" indefinitely.
+  // Non-force, so it only reconnects when the heartbeat is genuinely stale.
+  const watchdogIntervalId = setInterval(() => {
+    reconnectEnvironmentConnectionsAfterBrowserResume("heartbeat-watchdog");
+  }, 10_000);
+
   return () => {
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     window.removeEventListener("pageshow", handlePageShow);
+    window.removeEventListener("online", handleOnline);
+    window.removeEventListener("focus", handleWindowFocus);
+    clearInterval(watchdogIntervalId);
   };
 }
 

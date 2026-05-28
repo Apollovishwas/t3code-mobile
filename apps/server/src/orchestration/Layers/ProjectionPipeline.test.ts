@@ -175,6 +175,80 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-resume-session-")))(
+  "OrchestrationProjectionPipeline resume session",
+  (it) => {
+    it.effect(
+      "persists resumeSessionId to projection_threads so the reactor's read path can fork the session",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const now = "2026-01-01T00:00:00.000Z";
+
+          yield* eventStore.append({
+            type: "project.created",
+            eventId: EventId.make("evt-resume-1"),
+            aggregateKind: "project",
+            aggregateId: ProjectId.make("project-resume"),
+            occurredAt: now,
+            commandId: CommandId.make("cmd-resume-1"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-resume-1"),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.make("project-resume"),
+              title: "Resume Project",
+              workspaceRoot: "/tmp/resume-project",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+
+          yield* eventStore.append({
+            type: "thread.created",
+            eventId: EventId.make("evt-resume-2"),
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-resume"),
+            occurredAt: now,
+            commandId: CommandId.make("cmd-resume-2"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-resume-2"),
+            metadata: {},
+            payload: {
+              threadId: ThreadId.make("thread-resume"),
+              projectId: ProjectId.make("project-resume"),
+              title: "Resumed Thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: "claude-opus-4-7",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              resumeSessionId: "2dd3a734-ac01-4408-85c8-000000000001",
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+
+          yield* projectionPipeline.bootstrap;
+
+          const rows = yield* sql<{ readonly resumeSessionId: string | null }>`
+            SELECT resume_session_id AS "resumeSessionId"
+            FROM projection_threads
+            WHERE thread_id = ${"thread-resume"}
+          `;
+          assert.equal(rows.length, 1);
+          assert.equal(rows[0]?.resumeSessionId, "2dd3a734-ac01-4408-85c8-000000000001");
+        }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
   (it) => {

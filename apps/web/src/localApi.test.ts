@@ -599,6 +599,9 @@ describe("wsApi", () => {
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings = {
+      agentCompletionNotifications: false,
+      mascotProcessingEnabled: false,
+      mascotCharacter: "pink" as const,
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
@@ -662,6 +665,9 @@ describe("wsApi", () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings = {
+      agentCompletionNotifications: false,
+      mascotProcessingEnabled: false,
+      mascotCharacter: "pink" as const,
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,

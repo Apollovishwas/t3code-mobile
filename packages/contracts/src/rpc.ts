@@ -88,6 +88,21 @@ import {
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
+  Automation,
+  AutomationId,
+  AutomationRun,
+  CreateAutomationInput,
+  UpdateAutomationInput,
+} from "./automation.ts";
+import {
+  KanbanArtifact,
+  KanbanCard,
+  KanbanCardId,
+  KanbanColumn,
+  KanbanNote,
+} from "./kanban.ts";
+import { ProjectId } from "./baseSchemas.ts";
+import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -144,6 +159,16 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  automationsList: "automations.list",
+  automationsCreate: "automations.create",
+  automationsUpdate: "automations.update",
+  automationsDelete: "automations.delete",
+  automationsRunNow: "automations.runNow",
+  automationsRecentRuns: "automations.recentRuns",
+  kanbanListByProject: "kanban.listByProject",
+  kanbanGetCard: "kanban.getCard",
+  kanbanListArtifacts: "kanban.listArtifacts",
+  kanbanListNotes: "kanban.listNotes",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -215,6 +240,79 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+});
+
+// ----- Scheduled Automations -----------------------------------------------
+//
+// Five RPC verbs cover the full UI: list (all rows the user has access to),
+// create / update / delete (CRUD from the Settings panel), and runNow (the
+// per-row "Run now" tap target). recentRuns powers the small history strip.
+
+export const WsAutomationsListRpc = Rpc.make(WS_METHODS.automationsList, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(Automation),
+});
+
+export const WsAutomationsCreateRpc = Rpc.make(WS_METHODS.automationsCreate, {
+  payload: Schema.Struct({ input: CreateAutomationInput }),
+  success: Automation,
+});
+
+export const WsAutomationsUpdateRpc = Rpc.make(WS_METHODS.automationsUpdate, {
+  payload: Schema.Struct({ input: UpdateAutomationInput }),
+  success: Automation,
+});
+
+export const WsAutomationsDeleteRpc = Rpc.make(WS_METHODS.automationsDelete, {
+  payload: Schema.Struct({ id: AutomationId }),
+  success: Schema.Struct({ deleted: Schema.Boolean }),
+});
+
+export const WsAutomationsRunNowRpc = Rpc.make(WS_METHODS.automationsRunNow, {
+  payload: Schema.Struct({ id: AutomationId }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["fired", "failed"]),
+    detail: Schema.NullOr(Schema.String),
+  }),
+});
+
+export const WsAutomationsRecentRunsRpc = Rpc.make(WS_METHODS.automationsRecentRuns, {
+  payload: Schema.Struct({
+    id: AutomationId,
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 })),
+  }),
+  success: Schema.Array(AutomationRun),
+});
+
+// ----- Kanban board reads (UI is read-only — mutations live elsewhere) ----
+
+export const WsKanbanListByProjectRpc = Rpc.make(WS_METHODS.kanbanListByProject, {
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    column: Schema.optionalKey(KanbanColumn),
+  }),
+  success: Schema.Array(KanbanCard),
+});
+
+export const WsKanbanGetCardRpc = Rpc.make(WS_METHODS.kanbanGetCard, {
+  payload: Schema.Struct({ id: KanbanCardId }),
+  success: Schema.NullOr(KanbanCard),
+});
+
+export const WsKanbanListArtifactsRpc = Rpc.make(WS_METHODS.kanbanListArtifacts, {
+  payload: Schema.Struct({
+    cardId: KanbanCardId,
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  }),
+  success: Schema.Array(KanbanArtifact),
+});
+
+export const WsKanbanListNotesRpc = Rpc.make(WS_METHODS.kanbanListNotes, {
+  payload: Schema.Struct({
+    cardId: KanbanCardId,
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+  }),
+  success: Schema.Array(KanbanNote),
 });
 
 export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -521,4 +619,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsAutomationsListRpc,
+  WsAutomationsCreateRpc,
+  WsAutomationsUpdateRpc,
+  WsAutomationsDeleteRpc,
+  WsAutomationsRunNowRpc,
+  WsAutomationsRecentRunsRpc,
+  WsKanbanListByProjectRpc,
+  WsKanbanGetCardRpc,
+  WsKanbanListArtifactsRpc,
+  WsKanbanListNotesRpc,
 );

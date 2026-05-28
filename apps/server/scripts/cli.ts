@@ -22,16 +22,23 @@ import serverPackageJson from "../package.json" with { type: "json" };
 
 interface PackageJson {
   name: string;
+  description?: string;
+  author?: string;
+  license?: string;
   repository: {
     type: string;
     url: string;
     directory: string;
   };
+  homepage?: string;
+  bugs?: { url: string };
+  keywords?: ReadonlyArray<string>;
   bin: Record<string, string>;
   type: string;
   version: string;
   engines: Record<string, string>;
   files: string[];
+  publishConfig?: { access?: string };
   dependencies: Record<string, string>;
   overrides: Record<string, string>;
 }
@@ -175,6 +182,23 @@ const buildCmd = Command.make(
       } else {
         yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
       }
+
+      // Copy human-facing docs from the repo root into the server
+      // package directory so `npm pack` picks them up. README and
+      // LICENSE live at the monorepo root canonically; we mirror
+      // copies here purely for the published tarball. The `files:`
+      // entry in package.json already references them.
+      for (const docFile of ["README.md", "LICENSE", "CHANGELOG.md"]) {
+        const source = path.join(repoRoot, docFile);
+        const target = path.join(serverDir, docFile);
+        if (yield* fs.exists(source)) {
+          yield* fs.copyFile(source, target);
+          yield* Effect.log(`[cli] Copied ${docFile} into server package dir`);
+        } else if (docFile !== "CHANGELOG.md") {
+          // CHANGELOG is optional; README + LICENSE are not.
+          yield* Effect.logWarning(`[cli] Missing ${docFile} at repo root`);
+        }
+      }
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
 
@@ -215,16 +239,29 @@ const publishCmd = Command.make(
         // Acquire: backup package.json, resolve catalog dependencies, and strip devDependencies/scripts
         Effect.gen(function* () {
           const version = Option.getOrElse(config.appVersion, () => serverPackageJson.version);
+          // Preserve the human-facing metadata so the npm registry page
+          // shows a real description / author / homepage / keywords. The
+          // build is otherwise narrow (only the runtime needs to land in
+          // the published tarball), but discoverability + license clarity
+          // matter for users finding the package.
+          const sourcePkg = serverPackageJson as unknown as PackageJson;
           const pkg: PackageJson = {
-            name: serverPackageJson.name,
-            repository: serverPackageJson.repository,
-            bin: serverPackageJson.bin,
-            type: serverPackageJson.type,
+            name: sourcePkg.name,
+            ...(sourcePkg.description ? { description: sourcePkg.description } : {}),
+            ...(sourcePkg.author ? { author: sourcePkg.author } : {}),
+            ...(sourcePkg.license ? { license: sourcePkg.license } : {}),
+            repository: sourcePkg.repository,
+            ...(sourcePkg.homepage ? { homepage: sourcePkg.homepage } : {}),
+            ...(sourcePkg.bugs ? { bugs: sourcePkg.bugs } : {}),
+            ...(sourcePkg.keywords ? { keywords: sourcePkg.keywords } : {}),
+            bin: sourcePkg.bin,
+            type: sourcePkg.type,
             version,
-            engines: serverPackageJson.engines,
-            files: serverPackageJson.files,
+            engines: sourcePkg.engines,
+            files: sourcePkg.files,
+            ...(sourcePkg.publishConfig ? { publishConfig: sourcePkg.publishConfig } : {}),
             dependencies: resolveCatalogDependencies(
-              serverPackageJson.dependencies,
+              sourcePkg.dependencies,
               rootPackageJson.workspaces.catalog,
               "apps/server",
             ),

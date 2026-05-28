@@ -507,7 +507,23 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    // First turn of a thread created to resume an existing Claude session:
+    // seed a fork cursor so the adapter resumes that session's context but
+    // writes to a new, T3-owned session (never mutating the user's original).
+    const initialResumeCursor =
+      thread.resumeSessionId !== undefined && thread.resumeSessionId !== null
+        ? { resume: thread.resumeSessionId, fork: true, turnCount: 0 }
+        : undefined;
+    if (initialResumeCursor !== undefined) {
+      yield* Effect.logInfo("provider command reactor seeding resume fork cursor", {
+        threadId,
+        resumeSessionId: thread.resumeSessionId,
+        providerInstanceId: desiredInstanceId,
+      });
+    }
+    const startedSession = yield* startProviderSession(
+      initialResumeCursor !== undefined ? { resumeCursor: initialResumeCursor } : undefined,
+    );
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });

@@ -33,6 +33,8 @@ import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
+import { AutomationScheduler } from "./automation/Services/AutomationScheduler.ts";
+import { checkForUpdate } from "./lifecycle/versionCheck.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -283,6 +285,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const keybindings = yield* Keybindings;
   const orchestrationReactor = yield* OrchestrationReactor;
   const providerSessionReaper = yield* ProviderSessionReaper;
+  const automationScheduler = yield* AutomationScheduler;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -330,8 +333,15 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+        yield* automationScheduler.start().pipe(Scope.provide(reactorScope));
       }),
     );
+
+    // Background, fire-and-forget npm registry check. Errors are
+    // already swallowed inside `checkForUpdate`; we still fork the
+    // call onto the reactor scope so a slow request never delays
+    // the "server is ready" log line.
+    yield* Effect.forkScoped(checkForUpdate());
 
     const welcomeBase = yield* resolveWelcomeBase;
     const environment = yield* serverEnvironment.getDescriptor;

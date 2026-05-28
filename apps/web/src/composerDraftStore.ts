@@ -248,6 +248,10 @@ export interface DraftSessionState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  /** Existing Claude session this draft will resume (forked) on first send. */
+  resumeSessionId?: string;
+  /** Human-readable title of the resumed session, for the composer marker. */
+  resumeSessionTitle?: string;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -311,6 +315,8 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
+      resumeSessionId?: string;
+      resumeSessionTitle?: string;
     },
   ) => void;
   /** Creates or updates the draft session tracked for a concrete project ref. */
@@ -1158,6 +1164,8 @@ function createDraftThreadState(
     envMode?: DraftThreadEnvMode;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
+    resumeSessionId?: string;
+    resumeSessionTitle?: string;
   },
 ): DraftThreadState {
   const projectChanged =
@@ -1176,6 +1184,8 @@ function createDraftThreadState(
         ? null
         : (existingThread?.branch ?? null)
       : (options.branch ?? null);
+  const nextResumeSessionId = options?.resumeSessionId ?? existingThread?.resumeSessionId;
+  const nextResumeSessionTitle = options?.resumeSessionTitle ?? existingThread?.resumeSessionTitle;
   return {
     threadId,
     environmentId: projectRef.environmentId,
@@ -1194,6 +1204,8 @@ function createDraftThreadState(
         : projectChanged
           ? "local"
           : (existingThread?.envMode ?? "local")),
+    ...(nextResumeSessionId !== undefined ? { resumeSessionId: nextResumeSessionId } : {}),
+    ...(nextResumeSessionTitle !== undefined ? { resumeSessionTitle: nextResumeSessionTitle } : {}),
     promotedTo: null,
   };
 }
@@ -1225,6 +1237,8 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
+    left.resumeSessionId === right.resumeSessionId &&
+    left.resumeSessionTitle === right.resumeSessionTitle &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -2131,6 +2145,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : projectChanged
                     ? "local"
                     : (existing.envMode ?? "local")),
+              // Preserve the resume markers — rebuilding the session here must
+              // not drop them, or a wizard-armed resume is silently lost before
+              // the first send (which writes them into bootstrap.createThread).
+              ...(existing.resumeSessionId !== undefined
+                ? { resumeSessionId: existing.resumeSessionId }
+                : {}),
+              ...(existing.resumeSessionTitle !== undefined
+                ? { resumeSessionTitle: existing.resumeSessionTitle }
+                : {}),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =

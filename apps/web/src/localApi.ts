@@ -164,6 +164,52 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
           ? rpcClient.server.signalProcess(input)
           : Promise.reject(unavailableLocalBackendError()),
     },
+    automations: {
+      list: () =>
+        rpcClient
+          ? rpcClient.automations.list()
+          : Promise.reject(unavailableLocalBackendError()),
+      create: (input) =>
+        rpcClient
+          ? rpcClient.automations.create({ input })
+          : Promise.reject(unavailableLocalBackendError()),
+      update: (input) =>
+        rpcClient
+          ? rpcClient.automations.update({ input })
+          : Promise.reject(unavailableLocalBackendError()),
+      delete: (id) =>
+        rpcClient
+          ? rpcClient.automations.delete({ id })
+          : Promise.reject(unavailableLocalBackendError()),
+      runNow: (id) =>
+        rpcClient
+          ? rpcClient.automations.runNow({ id })
+          : Promise.reject(unavailableLocalBackendError()),
+      recentRuns: (id, limit) =>
+        rpcClient
+          ? rpcClient.automations.recentRuns({ id, limit })
+          : Promise.reject(unavailableLocalBackendError()),
+    },
+    kanban: {
+      listByProject: (projectId, column) =>
+        rpcClient
+          ? rpcClient.kanban.listByProject(
+              column !== undefined ? { projectId, column } : { projectId },
+            )
+          : Promise.reject(unavailableLocalBackendError()),
+      getCard: (id) =>
+        rpcClient
+          ? rpcClient.kanban.getCard({ id })
+          : Promise.reject(unavailableLocalBackendError()),
+      listArtifacts: (cardId, limit) =>
+        rpcClient
+          ? rpcClient.kanban.listArtifacts({ cardId, limit })
+          : Promise.reject(unavailableLocalBackendError()),
+      listNotes: (cardId, limit) =>
+        rpcClient
+          ? rpcClient.kanban.listNotes({ cardId, limit })
+          : Promise.reject(unavailableLocalBackendError()),
+    },
   };
 }
 

@@ -9,6 +9,8 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
+  EyeIcon,
+  EyeOffIcon,
   PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
@@ -29,6 +31,7 @@ import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -38,6 +41,11 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import {
+  FilePreviewPane,
+  extractAfterContentFromPatch,
+  getPreviewKind,
+} from "./FilePreviewPane";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -188,9 +196,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  // Side-by-side split is unreadable on narrow screens, so force unified there
+  // regardless of the saved preference (which is restored once wide again).
+  const isNarrowViewport = useMediaQuery("max-md");
+  const effectiveRenderMode: DiffRenderMode = isNarrowViewport ? "stacked" : diffRenderMode;
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [collapsedDiffFileKeys, setCollapsedDiffFileKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  /**
+   * Per-file Preview toggle — for markdown / html / svg / plain-text files
+   * the user can swap the unified-diff body for a rendered view of the
+   * after-edit content (extracted from the patch). See `FilePreviewPane`.
+   */
+  const [previewedDiffFileKeys, setPreviewedDiffFileKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const patchViewportRef = useRef<HTMLDivElement>(null);
@@ -389,6 +409,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       return next;
     });
   }, []);
+  const toggleDiffFilePreviewed = useCallback((fileKey: string) => {
+    setPreviewedDiffFileKeys((current) => {
+      const next = new Set(current);
+      if (next.has(fileKey)) {
+        next.delete(fileKey);
+      } else {
+        next.add(fileKey);
+      }
+      return next;
+    });
+  }, []);
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -571,7 +602,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           className="shrink-0"
           variant="outline"
           size="xs"
-          value={[diffRenderMode]}
+          value={[effectiveRenderMode]}
           onValueChange={(value) => {
             const next = value[0];
             if (next === "stacked" || next === "split") {
@@ -582,7 +613,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           <Toggle aria-label="Stacked diff view" value="stacked">
             <Rows3Icon className="size-3" />
           </Toggle>
-          <Toggle aria-label="Split diff view" value="split">
+          <Toggle
+            aria-label="Split diff view"
+            title={isNarrowViewport ? "Split view needs a wider screen" : undefined}
+            value="split"
+            disabled={isNarrowViewport}
+          >
             <Columns2Icon className="size-3" />
           </Toggle>
         </ToggleGroup>
@@ -664,6 +700,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
                   const collapsed = collapsedDiffFileKeys.has(fileKey);
+                  const previewKind = getPreviewKind(filePath);
+                  const previewed =
+                    previewKind !== null && previewedDiffFileKeys.has(fileKey);
+                  // Reconstruct after-edit content from the patch only when
+                  // preview is actually on — avoids walking the patch for
+                  // every file on every render.
+                  const previewContent =
+                    previewed && selectedPatch
+                      ? extractAfterContentFromPatch(selectedPatch, filePath)
+                      : null;
                   return (
                     <div
                       key={themedFileKey}
@@ -683,30 +729,65 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       <FileDiff
                         fileDiff={fileDiff}
                         renderHeaderPrefix={() => (
-                          <button
-                            type="button"
-                            className={cn(
-                              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
-                              getDiffCollapseIconClassName(fileDiff),
-                            )}
-                            aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
-                            aria-expanded={!collapsed}
-                            title={collapsed ? "Expand diff" : "Collapse diff"}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleDiffFileCollapsed(fileKey);
-                            }}
-                          >
-                            {collapsed ? (
-                              <ChevronRightIcon className="size-4" />
-                            ) : (
-                              <ChevronDownIcon className="size-4" />
-                            )}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className={cn(
+                                "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                getDiffCollapseIconClassName(fileDiff),
+                              )}
+                              aria-label={
+                                collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
+                              }
+                              aria-expanded={!collapsed}
+                              title={collapsed ? "Expand diff" : "Collapse diff"}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleDiffFileCollapsed(fileKey);
+                              }}
+                            >
+                              {collapsed ? (
+                                <ChevronRightIcon className="size-4" />
+                              ) : (
+                                <ChevronDownIcon className="size-4" />
+                              )}
+                            </button>
+                            {previewKind !== null ? (
+                              <button
+                                type="button"
+                                className={cn(
+                                  "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                  previewed ? "text-primary" : "text-muted-foreground",
+                                )}
+                                aria-label={
+                                  previewed
+                                    ? `Show diff for ${filePath}`
+                                    : `Preview rendered ${filePath}`
+                                }
+                                aria-pressed={previewed}
+                                title={
+                                  previewed ? "Show diff" : `Preview (${previewKind})`
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleDiffFilePreviewed(fileKey);
+                                }}
+                              >
+                                {previewed ? (
+                                  <EyeOffIcon className="size-4" />
+                                ) : (
+                                  <EyeIcon className="size-4" />
+                                )}
+                              </button>
+                            ) : null}
+                          </>
                         )}
                         options={{
-                          collapsed,
-                          diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                          // When preview is on we collapse the diff body so
+                          // only the FileDiff header remains visible — the
+                          // rendered content sits directly below.
+                          collapsed: collapsed || previewed,
+                          diffStyle: effectiveRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
                           overflow: diffWordWrap ? "wrap" : "scroll",
                           theme: resolveDiffThemeName(resolvedTheme),
@@ -714,6 +795,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
                         }}
                       />
+                      {previewed && previewContent !== null ? (
+                        <div className="mt-1 px-1 pb-1">
+                          <FilePreviewPane
+                            filePath={filePath}
+                            afterContent={previewContent}
+                            cwd={activeCwd ?? undefined}
+                          />
+                        </div>
+                      ) : null}
+                      {previewed && previewContent === null ? (
+                        <p className="mt-1 px-2 text-xs text-muted-foreground">
+                          Preview unavailable — could not reconstruct after-edit
+                          content from this patch.
+                        </p>
+                      ) : null}
                     </div>
                   );
                 })}

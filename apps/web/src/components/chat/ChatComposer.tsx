@@ -29,6 +29,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
@@ -60,6 +61,11 @@ import {
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
+import { ComposerMascot } from "./ComposerMascot";
+import { useMascotAction } from "~/hooks/useMascotAction";
+import { QuickActionChips, useQuickChipsEnabled } from "./QuickActionChips";
+import { PromptQueuePanel } from "./PromptQueuePanel";
+import { usePromptQueue } from "~/hooks/usePromptQueue";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
@@ -87,6 +93,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  ImageIcon,
   ListTodoIcon,
   type LucideIcon,
   LockIcon,
@@ -111,6 +118,7 @@ import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSettings } from "../../hooks/useSettings";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -483,6 +491,13 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  /**
+   * Fires whenever the working-mascot band toggles on or off (per-device
+   * opt-in, mobile only). Lets the parent hide sibling chrome — branch
+   * toolbar, environment dropdown — while the mascot is on stage so the
+   * mascot is the only thing on screen, restored on tap-to-dismiss / turn end.
+   */
+  onMascotActiveChange?: (active: boolean) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -556,6 +571,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    onMascotActiveChange,
   } = props;
 
   // ------------------------------------------------------------------
@@ -805,9 +821,123 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
 
   // ------------------------------------------------------------------
+  // Working-mascot lifecycle (per-device opt-in, mobile only).
+  // While a turn is running on a phone, swap the composer band for a tiny
+  // mascot; tap to bring the input back; auto-restore when the turn ends.
+  // ------------------------------------------------------------------
+  const mascotEnabled = useSettings((s) => s.mascotProcessingEnabled);
+  const mascotCharacter = useSettings((s) => s.mascotCharacter);
+  const [mascotDismissed, setMascotDismissed] = useState(false);
+  const [showMascotBand, setShowMascotBand] = useState(false);
+  const [mascotExiting, setMascotExiting] = useState(false);
+  // Bridge the (isSendBusy=false, phase=ready) gap that opens between
+  // the server's "I got your send" ack and the server's "the turn is
+  // running" event. Without this, the user sees "Sending…" → blank →
+  // "Working…" — a visible flicker on every send. Setting on rising
+  // edge of isSendBusy, clearing on phase=running, with a 5s safety
+  // timeout so we never get stuck on if the turn never starts (server
+  // error, dropped events, etc.).
+  const [pendingTurnStart, setPendingTurnStart] = useState(false);
+  useEffect(() => {
+    if (isSendBusy) setPendingTurnStart(true);
+  }, [isSendBusy]);
+  useEffect(() => {
+    if (phase === "running" || activePendingApproval !== null || pendingUserInputs.length > 0) {
+      setPendingTurnStart(false);
+    }
+  }, [phase, activePendingApproval, pendingUserInputs.length]);
+  useEffect(() => {
+    if (!pendingTurnStart) return;
+    const safety = window.setTimeout(() => setPendingTurnStart(false), 5000);
+    return () => window.clearTimeout(safety);
+  }, [pendingTurnStart]);
+  const mascotShouldShow =
+    mascotEnabled &&
+    isMobileViewport &&
+    (phase === "running" || isSendBusy || pendingTurnStart) &&
+    !mascotDismissed &&
+    activePendingApproval === null &&
+    pendingUserInputs.length === 0 &&
+    !showPlanFollowUpPrompt;
+  // Reset the "I tapped to hide the mascot" flag when a fresh turn starts.
+  const previousPhaseRef = useRef<typeof phase | null>(null);
+  useEffect(() => {
+    if (previousPhaseRef.current !== "running" && phase === "running") {
+      setMascotDismissed(false);
+    }
+    previousPhaseRef.current = phase;
+  }, [phase]);
+  // Mount/exit choreography so the mascot can play its slide-off animation.
+  useEffect(() => {
+    if (mascotShouldShow) {
+      setMascotExiting(false);
+      setShowMascotBand(true);
+      return undefined;
+    }
+    if (!showMascotBand) {
+      return undefined;
+    }
+    setMascotExiting(true);
+    const timer = window.setTimeout(() => {
+      setShowMascotBand(false);
+      setMascotExiting(false);
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [mascotShouldShow, showMascotBand]);
+  // Surface band visibility to the parent so it can hide sibling chrome
+  // (branch toolbar, environment picker) while the mascot is on stage.
+  useEffect(() => {
+    onMascotActiveChange?.(showMascotBand);
+  }, [showMascotBand, onMascotActiveChange]);
+  // Pick which sprite the mascot should play right now, derived from the
+  // live activity stream (tool in use, error, task completion, …). See
+  // `useMascotAction` for the action ↔ activity-kind mapping.
+  const { action: mascotAction } = useMascotAction({
+    activities: activeThreadActivities,
+    hasPendingApproval: activePendingApproval !== null,
+    hasPendingUserInput: pendingUserInputs.length > 0,
+  });
+
+  // ------------------------------------------------------------------
+  // Quick-action chips: pre-canned replies above the composer on mobile.
+  // Tap → fill the composer + submit immediately, collapsing the
+  // "type ten characters to approve" friction on a phone. The actual
+  // `sendQuickAction` callback is defined below where `submitComposer`
+  // is in scope; this block just owns the visibility flag.
+  // ------------------------------------------------------------------
+  const [quickChipsEnabled] = useQuickChipsEnabled();
+  const showQuickChips =
+    quickChipsEnabled &&
+    isMobileViewport &&
+    !showMascotBand &&
+    phase !== "running" &&
+    activePendingApproval === null &&
+    pendingUserInputs.length === 0 &&
+    !showPlanFollowUpPrompt &&
+    prompt.trim().length === 0;
+
+  // ------------------------------------------------------------------
+  // Prompt queue: let the user type follow-up prompts while the agent
+  // is still running. Queued prompts persist in localStorage per thread
+  // and auto-dispatch on the next phase=running→idle transition. The
+  // `handleQueueCurrent` callback and the dispatch effect live further
+  // down where `setPrompt` / `submitComposer` are in scope.
+  // ------------------------------------------------------------------
+  const queueThreadKey = activeThreadId ?? null;
+  const promptQueue = usePromptQueue(queueThreadKey);
+  const canQueueCurrent =
+    phase === "running" &&
+    activePendingApproval === null &&
+    pendingUserInputs.length === 0 &&
+    !showPlanFollowUpPrompt &&
+    prompt.trim().length > 0;
+  const showQueuePanel = promptQueue.items.length > 0 || canQueueCurrent;
+
+  // ------------------------------------------------------------------
   // Refs
   // ------------------------------------------------------------------
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const attachFileInputRef = useRef<HTMLInputElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerFormHeightRef = useRef(0);
@@ -1630,6 +1760,63 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [blurMobileComposerAfterSend, onSend, shouldBlurMobileComposerOnSubmit],
   );
+  // Tap a chip → drop its text into the composer draft store + promptRef
+  // and submit immediately. promptRef syncs from `prompt` via an effect
+  // that hasn't fired yet inside this tick, so we have to mutate it
+  // directly here or `onSend` would read the previous (empty) value.
+  const sendQuickAction = useCallback(
+    (text: string) => {
+      setPrompt(text);
+      promptRef.current = text;
+      submitComposer();
+    },
+    [setPrompt, promptRef, submitComposer],
+  );
+  // "Queue this" tap → push the current draft into the queue and clear
+  // the composer. The dispatch effect below picks it up once the agent
+  // is idle.
+  const handleQueueCurrent = useCallback(() => {
+    const trimmed = prompt.trim();
+    if (trimmed.length === 0) return;
+    promptQueue.enqueue(trimmed);
+    setPrompt("");
+    promptRef.current = "";
+  }, [prompt, promptQueue, setPrompt, promptRef]);
+
+  // Auto-dispatch the next queued prompt the moment the agent goes idle
+  // (and there's nothing else gating a send — pending approval / input /
+  // plan follow-up / connection / send-busy). The composer is also
+  // expected to be empty; if the user is mid-type when their previous
+  // turn finishes, respect that and let them finish.
+  useEffect(() => {
+    if (phase === "running") return;
+    if (promptQueue.items.length === 0) return;
+    if (isSendBusy || isConnecting) return;
+    if (activePendingApproval !== null || pendingUserInputs.length > 0) return;
+    if (showPlanFollowUpPrompt) return;
+    if (prompt.trim().length > 0) return;
+    const next = promptQueue.dequeue();
+    if (!next) return;
+    setPrompt(next.text);
+    promptRef.current = next.text;
+    // Defer one tick so the just-set state propagates through the
+    // composer tree (image attachments etc. all read from props/refs
+    // that update on the same tick, but defensive RAF is cheap).
+    const raf = window.requestAnimationFrame(() => submitComposer());
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    phase,
+    promptQueue,
+    isSendBusy,
+    isConnecting,
+    activePendingApproval,
+    pendingUserInputs.length,
+    showPlanFollowUpPrompt,
+    prompt,
+    setPrompt,
+    promptRef,
+    submitComposer,
+  ]);
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
       window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -1642,14 +1829,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.cancelAnimationFrame(mobileComposerExpandReleaseFrameRef.current);
     }
     mobileComposerExpandInFlightRef.current = true;
-    setIsComposerFocused(true);
-    mobileComposerExpandFrameRef.current = window.requestAnimationFrame(() => {
-      mobileComposerExpandFrameRef.current = null;
-      composerEditorRef.current?.focusAtEnd();
-      mobileComposerExpandReleaseFrameRef.current = window.requestAnimationFrame(() => {
-        mobileComposerExpandReleaseFrameRef.current = null;
-        mobileComposerExpandInFlightRef.current = false;
-      });
+    // iOS only raises the on-screen keyboard when focus() runs synchronously
+    // inside the tap gesture. The editor is display:none while collapsed, so we
+    // flushSync the un-hide first, then focus synchronously — all within this
+    // click handler. (Deferring focus to rAF loses the gesture → needed a 2nd tap.)
+    flushSync(() => setIsComposerFocused(true));
+    composerEditorRef.current?.focusAtEnd();
+    mobileComposerExpandReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      mobileComposerExpandReleaseFrameRef.current = null;
+      mobileComposerExpandInFlightRef.current = false;
     });
   }, []);
 
@@ -1954,10 +2142,51 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-208"
       data-chat-composer-form="true"
     >
+      {showMascotBand ? (
+        // Mascot wrapper gets its own opacity fade — the walker already
+        // slides in/out, and the band-level fade makes the entry/exit
+        // feel like a coordinated "scene change" instead of three
+        // independent animations colliding.
+        <div
+          className={cn(
+            "transition-opacity duration-300 ease-out",
+            mascotExiting ? "opacity-0" : "opacity-100",
+          )}
+        >
+          <ComposerMascot
+            character={mascotCharacter}
+            action={mascotAction}
+            exiting={mascotExiting}
+            onTap={() => setMascotDismissed(true)}
+          />
+        </div>
+      ) : null}
+      {showQueuePanel ? (
+        <PromptQueuePanel
+          items={promptQueue.items}
+          canQueueCurrent={canQueueCurrent}
+          onQueueCurrent={handleQueueCurrent}
+          onRemove={promptQueue.remove}
+          onClear={promptQueue.clear}
+        />
+      ) : null}
+      {showQuickChips ? <QuickActionChips onSend={sendQuickAction} /> : null}
       <div
         className={cn(
-          "group rounded-[22px] p-px transition-colors duration-200",
+          "group rounded-[22px] p-px overflow-hidden",
+          // Smooth height + opacity transition replaces the previous
+          // hard `hidden` swap so:
+          //   - Sending: composer collapses (max-h, opacity) over 300ms
+          //     while the mascot's walker walks in.
+          //   - Turn done: composer expands + fades back in over 300ms
+          //     after the mascot's 650ms exit animation finishes.
+          // Cross-transition is the result. `pointer-events-none` while
+          // collapsed so the invisible editor doesn't catch taps.
+          "transition-[max-height,opacity,background-color,border-color,color] duration-300 ease-out",
           composerProviderState.composerFrameClassName,
+          showMascotBand
+            ? "max-h-0 opacity-0 pointer-events-none"
+            : "max-h-screen opacity-100",
         )}
         onDragEnter={onComposerDragEnter}
         onDragOver={onComposerDragOver}
@@ -2324,6 +2553,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <input
+                  ref={attachFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    if (files.length > 0) {
+                      addComposerImages(files);
+                    }
+                    // Reset so picking the same file again re-fires change.
+                    event.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size={isComposerFooterCompact ? "icon-xs" : "icon-sm"}
+                  className="shrink-0 rounded-full"
+                  aria-label="Attach image or screenshot"
+                  title="Attach image or screenshot"
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => attachFileInputRef.current?.click()}
+                >
+                  <ImageIcon className="size-4" />
+                </Button>
                 <ProviderModelPicker
                   compact={isComposerFooterCompact}
                   activeInstanceId={selectedInstanceId}

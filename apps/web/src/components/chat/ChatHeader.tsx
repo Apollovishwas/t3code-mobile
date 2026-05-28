@@ -48,8 +48,12 @@ export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly availableEditorCount: number;
 }): boolean {
   return (
+    // Hide the "Open in" control entirely when no editors are installed,
+    // rather than showing a button whose menu only says "No installed editors".
+    input.availableEditorCount > 0 &&
     Boolean(input.activeProjectName) &&
     input.primaryEnvironmentId !== null &&
     input.activeThreadEnvironmentId === input.primaryEnvironmentId
@@ -86,6 +90,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeProjectName,
     activeThreadEnvironmentId,
     primaryEnvironmentId,
+    availableEditorCount: availableEditors.length,
   });
 
   return (

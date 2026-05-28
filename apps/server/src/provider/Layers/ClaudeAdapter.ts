@@ -55,8 +55,11 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { KanbanRepository } from "../../persistence/Services/KanbanBoard.ts";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -114,6 +117,12 @@ interface ClaudeResumeState {
   readonly resume?: string;
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
+  /**
+   * Fork the resumed session into a new session id instead of continuing it.
+   * Set when resuming a foreign Claude session into a new T3 thread so the
+   * user's original session file is never appended to.
+   */
+  readonly fork?: boolean;
 }
 
 interface ClaudeTurnState {
@@ -404,6 +413,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     sessionId?: unknown;
     resumeSessionAt?: unknown;
     turnCount?: unknown;
+    fork?: unknown;
   };
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
@@ -429,6 +439,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
+    ...(cursor.fork === true ? { fork: true } : {}),
   };
 }
 
@@ -591,6 +602,230 @@ const CLAUDE_SETTING_SOURCES = [
   "project",
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
+
+/**
+ * System-prompt append describing T3 Code's Kanban Board API.
+ *
+ * Kept as a function rather than a constant so the URL prefix could vary
+ * later (e.g., the user's Tailscale hostname for a remote-companion
+ * agent). For v1 the agent is always co-located with the server, so
+ * `127.0.0.1:3773` is fine — only Claude inside this process ever
+ * reads this prompt.
+ *
+ * Important: this static block tells the agent that the per-thread
+ * `Current board state` block (rendered just after this one) always
+ * contains the `projectId` and `threadId` for the current thread.
+ * The agent must use those — it must NEVER ask the user for an id.
+ * PWA users have no URL bar, so they cannot copy/paste ids in.
+ */
+function buildBoardSystemPromptAppend(): string {
+  const base = "http://127.0.0.1:3773";
+  return [
+    "",
+    "## T3 Code Kanban Board",
+    "",
+    "This project has a per-project Kanban board with 4 columns:",
+    "`backlog` / `ready` / `in_progress` / `done`.",
+    "",
+    "**The user CANNOT change the board through the UI — only through you.**",
+    "When the user asks you to track work, remember a follow-up, or move/finish",
+    "something on the board, call the HTTP API below using the `Bash` tool.",
+    "",
+    "Be proactive: when you start non-trivial work, create a card in",
+    "`in_progress`. When you finish work, move it to `done`. When the user",
+    "mentions follow-up work mid-task, add a card to `backlog` so they can",
+    "pick it up later. The board is the user's record of what you're doing.",
+    "",
+    "### Endpoints",
+    "",
+    `1. **List cards on a project's board:**`,
+    "   ```bash",
+    `   curl -s '${base}/api/board/list?projectId=<projectId>'`,
+    "   ```",
+    "   Optional: `&column=ready` to filter by column.",
+    "",
+    `2. **Create a card.** ALWAYS include \`threadId\` set to YOUR current`,
+    "   thread id (visible in the Current board state block below).",
+    "   That auto-binds the card to this thread, so the user can hit",
+    "   \"Run now\" or schedule it without a separate bind step:",
+    "   ```bash",
+    `   curl -s -X POST '${base}/api/board/cards' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"projectId":"<projectId>","threadId":"<your current threadId>","title":"<short title>","description":"<details, may be null>","priority":"normal","column":"backlog"}'`,
+    "   ```",
+    "   `priority` is one of `low|normal|high|urgent`. `column` is optional",
+    "   (defaults to `backlog`). `threadId` is optional only for out-of-thread",
+    "   automation; from a normal chat session, always include it.",
+    "",
+    `3. **Move a card between columns** (use this to mark work in_progress`,
+    "   when you start, and `done` when you finish):",
+    "   ```bash",
+    `   curl -s -X POST '${base}/api/board/cards/<cardId>/move' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"column":"done","note":"Optional one-line note about what changed."}'`,
+    "   ```",
+    "",
+    `4. **Edit a card** (title / description / priority / needsReview):`,
+    "   ```bash",
+    `   curl -s -X PATCH '${base}/api/board/cards/<cardId>' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"title":"new title","description":"new description","priority":"high","needsReview":true}'`,
+    "   ```",
+    "   All fields are optional — include only the ones you want to change.",
+    "",
+    `5. **Delete a card** (irreversible — confirm intent with the user first):`,
+    "   ```bash",
+    `   curl -s -X DELETE '${base}/api/board/cards/<cardId>'`,
+    "   ```",
+    "",
+    `6. **Append a journal note** to a card. Use this to log progress`,
+    "   updates ('finished schema migration, working on the UI now'),",
+    "   blockers, or context for the next session:",
+    "   ```bash",
+    `   curl -s -X POST '${base}/api/board/cards/<cardId>/notes' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"text":"Concise update sentence."}'`,
+    "   ```",
+    "",
+    `7. **Attach an artifact** when you produce something worth recording`,
+    "   on the card — a diff, PR link, commit SHA, log tail, screenshot path:",
+    "   ```bash",
+    `   curl -s -X POST '${base}/api/board/cards/<cardId>/artifacts' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"kind":"pr","payload":"https://github.com/owner/repo/pull/123"}'`,
+    "   ```",
+    "   `kind` is one of `diff|screenshot|log|pr|commit|note`. The `payload`",
+    "   is free-form text (URL, SHA, multi-line log — whatever you'd want",
+    "   to see on the card later).",
+    "",
+    `8. **Bind a thread to a card** so future scheduled runs of the card`,
+    "   land in that thread. Pass `null` to unbind. Most useful when the",
+    "   user asks you to set up a recurring run of an existing card:",
+    "   ```bash",
+    `   curl -s -X PUT '${base}/api/board/cards/<cardId>/thread' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"threadId":"<threadId>"}'`,
+    "   ```",
+    "",
+    `9. **Schedule a card to run on a recurring interval.** The card must`,
+    "   be bound to a thread first (see #8). When the schedule fires, the",
+    "   server dispatches the card's description as a new prompt into",
+    "   the bound thread. `schedule.minutes` is the interval in whole",
+    "   minutes (min 1, max 30 days). Replaces any existing schedule:",
+    "   ```bash",
+    `   curl -s -X POST '${base}/api/board/cards/<cardId>/schedule' \\`,
+    "     -H 'Content-Type: application/json' \\",
+    `     -d '{"schedule":{"kind":"interval","minutes":60}}'`,
+    "   ```",
+    "",
+    `10. **Unschedule a card** — removes the recurring trigger:`,
+    "    ```bash",
+    `    curl -s -X DELETE '${base}/api/board/cards/<cardId>/schedule'`,
+    "    ```",
+    "",
+    "### Finding the projectId / threadId",
+    "",
+    "**The `Current board state` block immediately below contains the",
+    "`projectId` and `threadId` for THIS thread.** Use them directly.",
+    "",
+    "Do NOT ask the user for an id. Most users run T3 Code as an",
+    "installed PWA on iOS/iPad where the URL bar is hidden, so they",
+    "can't see or copy ids. If the per-thread block below somehow lacks",
+    "a projectId (very fresh thread before the projection has caught up),",
+    "discover it by calling:",
+    "```bash",
+    `curl -s '${base}/api/board/projects'`,
+    "```",
+    "which returns `{projects: [{id, title, workspaceRoot}, …]}`. Match",
+    "your current working directory against `workspaceRoot` to identify",
+    "the right project.",
+    "",
+    "Cards are JSON of the form:",
+    "```json",
+    `{"id":"card-…","projectId":"prj-…","title":"…","description":null,"column":"backlog","priority":"normal","needsReview":false,"threadId":null,"lastThreadId":null,"schedule":null,"scheduleAutomationId":null,"blockedBy":null,"sortOrder":0,"tasksMirrorId":null,"createdAt":0,"updatedAt":0,"doneAt":null}`,
+    "```",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Per-turn board context: looks up the thread's projectId, counts cards
+ * per column for that project, and renders a small markdown block the
+ * agent can read at zero curl cost. Returns "" when the thread isn't
+ * in the projection yet (fresh thread, bootstrap turn) — the static
+ * API documentation is still appended, so the agent can self-discover
+ * what's on the board with a list call.
+ */
+const buildBoardContextForThread = (params: {
+  readonly threadId: ThreadId;
+  readonly projectionSnapshotQuery: typeof ProjectionSnapshotQuery.Service;
+  readonly kanbanRepository: typeof KanbanRepository.Service;
+}) =>
+  Effect.gen(function* () {
+    const { threadId, projectionSnapshotQuery, kanbanRepository } = params;
+    const threadShellOpt = yield* projectionSnapshotQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+    const thread = Option.getOrUndefined(threadShellOpt);
+    // ALWAYS render the block — the threadId is known unconditionally
+    // (from input.threadId), and the agent uses it for `bind-thread`
+    // calls. The projectId is included only when we found the thread
+    // shell; for very fresh threads the agent's instructed (in the
+    // static block above) to call `GET /api/board/projects` to discover
+    // it from cwd.
+    const lines: string[] = [];
+    lines.push("");
+    lines.push("## Current board state");
+    lines.push("");
+    lines.push(`Thread id: \`${threadId}\``);
+    if (!thread) {
+      lines.push("Project id: _(not yet in the projection — call \\`GET /api/board/projects\\` to discover from cwd)_");
+      lines.push("");
+      return lines.join("\n");
+    }
+    const projectId = thread.projectId;
+    lines.push(`Project id: \`${projectId}\``);
+    const cards = yield* kanbanRepository
+      .listByProject({ projectId })
+      .pipe(Effect.catch(() => Effect.succeed([])));
+    lines.push("");
+    if (cards.length === 0) {
+      lines.push("_This project's board is empty._ Use the endpoints above to");
+      lines.push("add cards when work emerges.");
+      lines.push("");
+      return lines.join("\n");
+    }
+    const counts = { backlog: 0, ready: 0, in_progress: 0, done: 0 };
+    const inProgressTitles: string[] = [];
+    const needsReview: string[] = [];
+    for (const card of cards) {
+      counts[card.column] += 1;
+      if (card.column === "in_progress") {
+        inProgressTitles.push(`${card.title} (id: ${card.id})`);
+      }
+      if (card.needsReview && card.column !== "in_progress") {
+        needsReview.push(`${card.title} (id: ${card.id})`);
+      }
+    }
+    lines.push("| Column | Count |");
+    lines.push("|---|---|");
+    lines.push(`| backlog | ${counts.backlog} |`);
+    lines.push(`| ready | ${counts.ready} |`);
+    lines.push(`| in_progress | ${counts.in_progress} |`);
+    lines.push(`| done | ${counts.done} |`);
+    if (inProgressTitles.length > 0) {
+      lines.push("");
+      lines.push("**In progress right now:**");
+      for (const title of inProgressTitles) lines.push(`- ${title}`);
+    }
+    if (needsReview.length > 0) {
+      lines.push("");
+      lines.push("**Awaiting review (needs the user's eyes):**");
+      for (const title of needsReview) lines.push(`- ${title}`);
+    }
+    lines.push("");
+    return lines.join("\n");
+  });
 
 function buildPromptText(
   input: ProviderSendTurnInput,
@@ -998,6 +1233,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig;
+  // Used to look up the thread's project + current board state at every
+  // turn so the systemPrompt.append can show the agent what's on the board.
+  // `serviceOption` keeps these *optional* — tests that don't exercise the
+  // turn-start path don't have to provide mocks, and a deployment that
+  // somehow omits the kanban layer still boots (the per-turn board
+  // summary just collapses to the empty fallback string).
+  const projectionSnapshotQueryOpt = yield* Effect.serviceOption(ProjectionSnapshotQuery);
+  const kanbanRepositoryOpt = yield* Effect.serviceOption(KanbanRepository);
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, options?.environment).pipe(
     Effect.provideService(Path.Path, path),
   );
@@ -2552,9 +2795,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
+      // Forking resumes the foreign session's context but writes to a brand-new
+      // session id that T3 owns from here on (the original is left untouched).
+      const forkRequested = resumeState?.fork === true && existingResumeSessionId !== undefined;
       const newSessionId =
-        existingResumeSessionId === undefined ? yield* Random.nextUUIDv4 : undefined;
-      const sessionId = existingResumeSessionId ?? newSessionId;
+        existingResumeSessionId === undefined || forkRequested
+          ? yield* Random.nextUUIDv4
+          : undefined;
+      // The session id T3 tracks going forward: the fork's new id when forking,
+      // otherwise the resumed id (or a freshly generated one).
+      const sessionId = forkRequested ? newSessionId : (existingResumeSessionId ?? newSessionId);
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -2897,11 +3147,41 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
       };
+      // Build the per-turn board summary block — runs once per turn and
+      // hands the resulting markdown to the API client via the systemPrompt
+      // append. Best-effort: if the projection or repo can't answer right
+      // now (corrupt state, missing thread, or services simply not in
+      // the test runtime), we fall back to the static API block alone so
+      // the agent still knows how to mutate the board.
+      const projectionSnapshotQuery = Option.getOrUndefined(projectionSnapshotQueryOpt);
+      const kanbanRepository = Option.getOrUndefined(kanbanRepositoryOpt);
+      // The dynamic block is built lazily — if either service is absent
+      // (unusual; only happens in test contexts that don't provide them),
+      // we still inject a minimal block with just the threadId so the
+      // agent can bind threads even in those environments.
+      const boardContextAppend =
+        projectionSnapshotQuery && kanbanRepository
+          ? yield* buildBoardContextForThread({
+              threadId: input.threadId,
+              projectionSnapshotQuery,
+              kanbanRepository,
+            }).pipe(Effect.catch(() => Effect.succeed("")))
+          : `\n## Current board state\n\nThread id: \`${input.threadId}\`\n_(board services unavailable; calls to /api/board will still work.)_\n`;
+
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          // T3 Code injects two blocks into every Claude session:
+          //   1. The Board API documentation (static URL-table list).
+          //   2. A per-thread board state summary (this turn's project
+          //      + counts per column + In Progress titles) so the agent
+          //      can answer "what's on my board" without a curl call.
+          append: buildBoardSystemPromptAppend() + boardContextAppend,
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
         // the published `Options["effort"]` union currently stops at `max`.
@@ -2917,6 +3197,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
+        ...(forkRequested ? { forkSession: true } : {}),
         includePartialMessages: true,
         canUseTool,
         env: claudeEnvironment,

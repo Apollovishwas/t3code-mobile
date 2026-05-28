@@ -45,6 +45,42 @@
   }
 }
 
+/* Working-mascot keyframes — defined at top-level (NOT inside @theme) so that
+   Tailwind v4 doesn't tree-shake them. v4 only emits keyframes inside @theme
+   when a matching `animate-{name}` utility is found in the source; we
+   reference these via inline `style={{ animation: ... }}` in ComposerMascot,
+   which the scanner can't see — so anything left in @theme gets stripped from
+   the built CSS and the sprite would freeze on frame 0. */
+
+/* Pixel-art sprite-sheet step animation for the working mascot.
+   Sprite strips are 32px tall, rendered at 1.5x scale (48px). Frame count
+   varies per action (Idle 4, Walk 6, Run 6, Push 6, Jump 8, Climb 4, …),
+   so the end position is parameterized via `--mascot-sheet-end` (the
+   negative pixel offset that lands on the last frame). The element also
+   passes `steps(N)` to its `animation` shorthand to match. */
+@keyframes mascot-sprite-step {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: var(--mascot-sheet-end, 0) 0;
+  }
+}
+
+/* Horizontal wall-to-wall walk. `--mascot-travel` is set inline by JS after
+   measuring (band width − mascot row width). Used with `animation-direction:
+   alternate` so it bounces 0 → travel → 0 → travel forever; each direction
+   switch fires `animationiteration`, which ComposerMascot listens to so it
+   can flip the character's facing via scaleX on a separate layer. */
+@keyframes mascot-walk {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--mascot-travel, 0px));
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -85,6 +121,8 @@
 
 :root {
   color-scheme: light;
+  /* Height obscured by the on-screen keyboard; set by installKeyboardInsetTracking(). */
+  --keyboard-inset: 0px;
   --radius: 0.625rem;
   --background: var(--color-white);
   --app-chrome-background: var(--background);

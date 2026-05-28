@@ -30,6 +30,12 @@ import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import {
+  ensureNotificationPermission,
+  notificationPermission,
+  type NotificationPermissionState,
+} from "../../notifications";
+import { disablePushSubscription, enablePushSubscription } from "../../push";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
   setDesktopUpdateStateQueryData,
@@ -477,6 +483,64 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
+/**
+ * Per-device toggle for "agent finished" notifications. Enabling it requests
+ * the OS notification permission (the toggle click is the required user
+ * gesture); the preference is only stored as enabled once permission is
+ * granted, and surfaces a hint when the browser has blocked notifications.
+ */
+function NotificationsSettingRow() {
+  const enabled = useSettings((s) => s.agentCompletionNotifications);
+  const { updateSettings } = useUpdateSettings();
+  const [permission, setPermission] = useState<NotificationPermissionState>(() =>
+    notificationPermission(),
+  );
+
+  const handleToggle = useCallback(
+    (checked: boolean) => {
+      if (!checked) {
+        updateSettings({ agentCompletionNotifications: false });
+        void disablePushSubscription();
+        return;
+      }
+      void ensureNotificationPermission().then(async (result) => {
+        setPermission(result);
+        if (result !== "granted") {
+          updateSettings({ agentCompletionNotifications: false });
+          return;
+        }
+        // Register for server-sent push so notifications arrive even when the
+        // app is backgrounded (the only path that works on iOS).
+        await enablePushSubscription();
+        updateSettings({ agentCompletionNotifications: true });
+      });
+    },
+    [updateSettings],
+  );
+
+  const description =
+    permission === "denied"
+      ? "Notifications are blocked. Allow them for this site in your browser or OS settings, then toggle this again."
+      : permission === "unsupported"
+        ? "This browser doesn't support notifications."
+        : "Get notified when an agent finishes a turn while the app is in the background.";
+
+  return (
+    <SettingsRow
+      title="Agent notifications"
+      description={description}
+      control={
+        <Switch
+          checked={enabled && permission === "granted"}
+          disabled={permission === "unsupported"}
+          onCheckedChange={(checked) => handleToggle(Boolean(checked))}
+          aria-label="Notify when an agent finishes"
+        />
+      }
+    />
+  );
+}
+
 export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -666,6 +730,83 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Stream assistant messages"
             />
+          }
+        />
+
+        <NotificationsSettingRow />
+
+        <SettingsRow
+          title="Working mascot"
+          description="On phones, replace the composer with a small animated mascot while the agent is working. Tap the mascot to bring the input back."
+          resetAction={
+            settings.mascotProcessingEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.mascotProcessingEnabled ? (
+              <SettingResetButton
+                label="working mascot"
+                onClick={() =>
+                  updateSettings({
+                    mascotProcessingEnabled: DEFAULT_UNIFIED_SETTINGS.mascotProcessingEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.mascotProcessingEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ mascotProcessingEnabled: Boolean(checked) })
+              }
+              aria-label="Show a working mascot while the agent runs"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Mascot character"
+          description="Which monster keeps you company while the agent works (pixel art from craftpix.net)."
+          resetAction={
+            settings.mascotCharacter !== DEFAULT_UNIFIED_SETTINGS.mascotCharacter ? (
+              <SettingResetButton
+                label="mascot character"
+                onClick={() =>
+                  updateSettings({
+                    mascotCharacter: DEFAULT_UNIFIED_SETTINGS.mascotCharacter,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.mascotCharacter}
+              onValueChange={(value) => {
+                if (value === "pink" || value === "owlet" || value === "dude") {
+                  updateSettings({ mascotCharacter: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Mascot character">
+                <SelectValue>
+                  {settings.mascotCharacter === "owlet"
+                    ? "Owlet Monster"
+                    : settings.mascotCharacter === "dude"
+                      ? "Dude Monster"
+                      : "Pink Monster"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="pink">
+                  Pink Monster
+                </SelectItem>
+                <SelectItem hideIndicator value="owlet">
+                  Owlet Monster
+                </SelectItem>
+                <SelectItem hideIndicator value="dude">
+                  Dude Monster
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

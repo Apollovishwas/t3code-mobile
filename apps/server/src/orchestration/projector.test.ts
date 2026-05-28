@@ -99,6 +99,40 @@ describe("orchestration projector", () => {
     ]);
   });
 
+  it("carries resumeSessionId from thread.created into the thread read model", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const next = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-resume",
+          occurredAt: now,
+          commandId: "cmd-thread-create-resume",
+          payload: {
+            threadId: "thread-resume",
+            projectId: "project-1",
+            title: "resumed",
+            modelSelection: {
+              provider: ProviderDriverKind.make("claudeAgent"),
+              model: "claude-opus-4-7",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            resumeSessionId: "2dd3a734-ac01-4408-85c8-000000000000",
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.resumeSessionId).toBe("2dd3a734-ac01-4408-85c8-000000000000");
+  });
+
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = "2026-01-01T00:00:00.000Z";
     const model = createEmptyReadModel(now);

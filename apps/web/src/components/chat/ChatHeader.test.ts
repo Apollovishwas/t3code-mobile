@@ -12,6 +12,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
+        availableEditorCount: 2,
       }),
     ).toBe(true);
   });
@@ -22,6 +23,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId: null,
+        availableEditorCount: 2,
       }),
     ).toBe(false);
   });
@@ -32,6 +34,7 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
+        availableEditorCount: 2,
       }),
     ).toBe(false);
   });
@@ -42,6 +45,18 @@ describe("shouldShowOpenInPicker", () => {
         activeProjectName: undefined,
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
+        availableEditorCount: 2,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the picker when no editors are installed", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+        availableEditorCount: 0,
       }),
     ).toBe(false);
   });

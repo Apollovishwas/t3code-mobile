@@ -20,9 +20,12 @@ import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
+import { useSmoothStreamedText, withStreamingCaret } from "../../hooks/useSmoothStreamedText";
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
@@ -408,7 +411,12 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const isStreaming = Boolean(row.message.streaming);
+  const messageText = row.message.text || (isStreaming ? "" : "(empty response)");
+  // Smoothly interpolate the chunky server text updates into a continuous
+  // character flow, and add a typewriter caret while the response streams in.
+  const smoothText = useSmoothStreamedText(messageText, isStreaming);
+  const renderedText = isStreaming ? withStreamingCaret(smoothText) : smoothText;
 
   return (
     <>
@@ -417,9 +425,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       )}
       <div className="min-w-0 px-1 py-0.5">
         <ChatMarkdown
-          text={messageText}
+          text={renderedText}
           cwd={ctx.markdownCwd}
-          isStreaming={Boolean(row.message.streaming)}
+          isStreaming={isStreaming}
           skills={ctx.skills}
         />
         <AssistantChangedFilesSection
@@ -1099,11 +1107,40 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
+function workEntryKindLabel(workEntry: TimelineWorkEntry): string | null {
+  if (
+    workEntry.requestKind === "command" ||
+    workEntry.itemType === "command_execution" ||
+    workEntry.command
+  ) {
+    return "Terminal";
+  }
+  if (
+    workEntry.requestKind === "file-change" ||
+    workEntry.itemType === "file_change" ||
+    (workEntry.changedFiles?.length ?? 0) > 0
+  ) {
+    return "Edit";
+  }
+  if (workEntry.itemType === "image_view") return "Image";
+  if (workEntry.requestKind === "file-read") return "Read";
+  if (workEntry.itemType === "web_search") return "Search";
+  if (workEntry.itemType === "mcp_tool_call") return "MCP";
+  if (
+    workEntry.itemType === "dynamic_tool_call" ||
+    workEntry.itemType === "collab_agent_tool_call"
+  ) {
+    return "Tool";
+  }
+  return null;
+}
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
@@ -1114,90 +1151,115 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       normalizeCompactToolLabel(heading).toLowerCase()
       ? null
       : rawPreview;
-  const rawCommand = workEntryRawCommand(workEntry);
   const displayText = preview ? `${heading} - ${preview}` : heading;
-  const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+
+  const kindLabel = workEntryKindLabel(workEntry);
+  const isError = workEntry.tone === "error";
+  // Prefer the untruncated raw command when it differs from the compact label.
+  const fullCommand = workEntryRawCommand(workEntry) ?? workEntry.command?.trim() ?? "";
+  const detailText = workEntry.detail?.trim() ?? "";
+  const showDetailText =
+    detailText.length > 0 && detailText !== fullCommand && detailText !== heading;
+  const changedFiles = workEntry.changedFiles ?? [];
+  const hasExpandableContent = fullCommand.length > 0 || showDetailText || changedFiles.length > 0;
 
   return (
     <div className="rounded-lg px-1 py-1">
-      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
+      <div
+        className={cn(
+          "flex items-center gap-2 transition-[opacity,translate] duration-200",
+          hasExpandableContent && "cursor-pointer",
+        )}
+        onClick={hasExpandableContent ? () => setExpanded((value) => !value) : undefined}
+      >
         <span
           className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
         >
           <EntryIcon className="size-3" />
         </span>
         <div className="min-w-0 flex-1 overflow-hidden">
-          {rawCommand ? (
-            <div className="max-w-full">
+          <Tooltip>
+            <TooltipTrigger
+              className="block min-w-0 w-full text-left"
+              title={displayText}
+              aria-label={displayText}
+            >
               <p
                 className={cn(
-                  "truncate text-xs leading-5",
+                  "truncate text-[11px] leading-5",
                   workToneClass(workEntry.tone),
                   preview ? "text-muted-foreground/70" : "",
                 )}
-                title={displayText}
               >
                 <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
                   {heading}
                 </span>
-                {preview && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      closeDelay={0}
-                      delay={75}
-                      render={
-                        <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
-                          {" "}
-                          - {preview}
-                        </span>
-                      }
-                    />
-                    <TooltipPopup
-                      align="start"
-                      className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
-                      side="top"
-                    >
-                      <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
-                        {rawCommand}
-                      </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                )}
+                {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
               </p>
-            </div>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                className="block min-w-0 w-full text-left"
-                title={displayText}
-                aria-label={displayText}
-              >
-                <p
-                  className={cn(
-                    "truncate text-[11px] leading-5",
-                    workToneClass(workEntry.tone),
-                    preview ? "text-muted-foreground/70" : "",
-                  )}
-                >
-                  <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                    {heading}
+            </TooltipTrigger>
+            <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
+              <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">{displayText}</p>
+            </TooltipPopup>
+          </Tooltip>
+        </div>
+        {kindLabel && (
+          <span className="shrink-0 rounded border border-border/45 px-1 py-px font-mono text-[9px] uppercase tracking-wide text-muted-foreground/55">
+            {kindLabel}
+          </span>
+        )}
+        <span
+          aria-hidden
+          title={isError ? "Failed" : "Completed"}
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            isError ? "bg-rose-400/80" : "bg-emerald-400/70",
+          )}
+        />
+        {hasExpandableContent && (
+          <span className="shrink-0 text-muted-foreground/45">
+            {expanded ? (
+              <ChevronDownIcon className="size-3" />
+            ) : (
+              <ChevronRightIcon className="size-3" />
+            )}
+          </span>
+        )}
+      </div>
+
+      {hasExpandableContent && expanded && (
+        <div className="mt-1.5 space-y-1.5 pl-7">
+          {fullCommand.length > 0 && (
+            <pre className="max-h-60 overflow-auto rounded-md border border-border/55 bg-background/70 px-2 py-1.5 font-mono text-[11px] leading-4 whitespace-pre-wrap wrap-break-word text-foreground/80">
+              {fullCommand}
+            </pre>
+          )}
+          {showDetailText && (
+            <p className="whitespace-pre-wrap wrap-break-word text-[11px] leading-4 text-muted-foreground/75">
+              {detailText}
+            </p>
+          )}
+          {changedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {changedFiles.map((filePath) => {
+                const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
+                return (
+                  <span
+                    key={`${workEntry.id}:${filePath}`}
+                    className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                    title={displayPath}
+                  >
+                    {displayPath}
                   </span>
-                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
-                </p>
-              </TooltipTrigger>
-              <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
-                <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
-                  {displayText}
-                </p>
-              </TooltipPopup>
-            </Tooltip>
+                );
+              })}
+            </div>
           )}
         </div>
-      </div>
-      {hasChangedFiles && !previewIsChangedFiles && (
-        <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
+      )}
+
+      {!expanded && changedFiles.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1 pl-7">
+          {changedFiles.slice(0, 4).map((filePath) => {
             const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
             return (
               <span
@@ -1209,9 +1271,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               </span>
             );
           })}
-          {(workEntry.changedFiles?.length ?? 0) > 4 && (
+          {changedFiles.length > 4 && (
             <span className="px-1 text-[10px] text-muted-foreground/55">
-              +{(workEntry.changedFiles?.length ?? 0) - 4}
+              +{changedFiles.length - 4}
             </span>
           )}
         </div>

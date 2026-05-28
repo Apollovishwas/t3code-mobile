@@ -50,6 +50,21 @@ import type {
   TerminalWriteInput,
 } from "./terminal.ts";
 import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
+import type {
+  Automation,
+  AutomationId,
+  AutomationRun,
+  CreateAutomationInput,
+  UpdateAutomationInput,
+} from "./automation.ts";
+import type {
+  KanbanArtifact,
+  KanbanCard,
+  KanbanCardId,
+  KanbanColumn,
+  KanbanNote,
+} from "./kanban.ts";
+import type { ProjectId } from "./baseSchemas.ts";
 import * as Schema from "effect/Schema";
 import type {
   ClientOrchestrationCommand,
@@ -481,6 +496,44 @@ export interface LocalApi {
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
+  };
+  /**
+   * Scheduled automations — server-side cron-like triggers that fire prompts
+   * into existing threads on a schedule. See `apps/server/src/automation/`.
+   */
+  automations: {
+    list: () => Promise<ReadonlyArray<Automation>>;
+    create: (input: CreateAutomationInput) => Promise<Automation>;
+    update: (input: UpdateAutomationInput) => Promise<Automation>;
+    delete: (id: AutomationId) => Promise<{ readonly deleted: boolean }>;
+    runNow: (id: AutomationId) => Promise<{
+      readonly outcome: "fired" | "failed";
+      readonly detail: string | null;
+    }>;
+    recentRuns: (
+      id: AutomationId,
+      limit: number,
+    ) => Promise<ReadonlyArray<AutomationRun>>;
+  };
+  /**
+   * Per-project Kanban board. The UI is read-only — mutations are
+   * driven from inside Claude threads via the agent tool surface and
+   * the HTTP API at `/api/board/*`.
+   */
+  kanban: {
+    listByProject: (
+      projectId: ProjectId,
+      column?: KanbanColumn,
+    ) => Promise<ReadonlyArray<KanbanCard>>;
+    getCard: (id: KanbanCardId) => Promise<KanbanCard | null>;
+    listArtifacts: (
+      cardId: KanbanCardId,
+      limit: number,
+    ) => Promise<ReadonlyArray<KanbanArtifact>>;
+    listNotes: (
+      cardId: KanbanCardId,
+      limit: number,
+    ) => Promise<ReadonlyArray<KanbanNote>>;
   };
 }
 
