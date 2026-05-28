@@ -22,3 +22,4 @@ export * from "./filesystem.ts";
 export * from "./rpc.ts";
 export * from "./automation.ts";
 export * from "./kanban.ts";
+export * from "./wiki.ts";

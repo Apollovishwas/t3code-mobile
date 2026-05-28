@@ -93,6 +93,26 @@ import { PushNotificationReactorLive } from "./push/Layers/PushNotificationReact
 import { AutomationSchedulerLive } from "./automation/Layers/AutomationScheduler.ts";
 import { AutomationRepositoryLive } from "./persistence/Layers/Automations.ts";
 import { KanbanRepositoryLive } from "./persistence/Layers/KanbanBoard.ts";
+import { WikiReaderLive } from "./wiki/Layers/WikiReader.ts";
+import { WikiWriterLive } from "./wiki/Layers/WikiWriter.ts";
+import { WikiSchedulerLive } from "./wiki/Layers/WikiScheduler.ts";
+import { layer as ProcessRunnerLive } from "./processRunner.ts";
+import {
+  wikiCaptureThreadRouteLayer,
+  wikiDetectRouteLayer,
+  wikiGardenRouteLayer,
+  wikiHealthRouteLayer,
+  wikiInitRouteLayer,
+  wikiListRouteLayer,
+  wikiPageRouteLayer,
+  wikiExportMarkdownRouteLayer,
+  wikiSchedulesDeleteRouteLayer,
+  wikiSchedulesListRouteLayer,
+  wikiSchedulesUpsertRouteLayer,
+  wikiSearchRouteLayer,
+  wikiStatusRouteLayer,
+  wikiTopicsRouteLayer,
+} from "./wiki/http.ts";
 import {
   kanbanAddNoteRouteLayer,
   kanbanAttachArtifactRouteLayer,
@@ -185,6 +205,16 @@ const ReactorLayerLive = Layer.empty.pipe(
   // tool surface. See `apps/server/src/kanban/` for the tool layer that
   // calls into this repository.
   Layer.provideMerge(KanbanRepositoryLive),
+  // Wiki — read-only view of the project's Almanac wiki (`.almanac/index.db`).
+  // Writes happen in slice 4 via the `almanac` CLI spawn layer.
+  Layer.provideMerge(WikiReaderLive),
+  Layer.provideMerge(WikiWriterLive),
+  Layer.provideMerge(WikiSchedulerLive),
+  // ProcessRunner powers both the `/api/wiki/detect` probe (slice 2)
+  // and the writer that spawns `almanac capture` (slice 4). VcsProcess
+  // and ServerEnvironment have their own provisions; this one ensures
+  // the wiki HTTP layer can reach it.
+  Layer.provideMerge(ProcessRunnerLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );
 
@@ -369,6 +399,21 @@ export const makeRoutesLayer = Layer.mergeAll(
   kanbanBindThreadRouteLayer,
   kanbanScheduleCardRouteLayer,
   kanbanUnscheduleCardRouteLayer,
+  // Wiki read-only endpoints (Almanac integration, slice 1)
+  wikiStatusRouteLayer,
+  wikiListRouteLayer,
+  wikiPageRouteLayer,
+  wikiSearchRouteLayer,
+  wikiTopicsRouteLayer,
+  wikiHealthRouteLayer,
+  wikiDetectRouteLayer,
+  wikiInitRouteLayer,
+  wikiCaptureThreadRouteLayer,
+  wikiGardenRouteLayer,
+  wikiSchedulesListRouteLayer,
+  wikiSchedulesUpsertRouteLayer,
+  wikiSchedulesDeleteRouteLayer,
+  wikiExportMarkdownRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,

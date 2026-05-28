@@ -5,6 +5,7 @@ import {
   CloudIcon,
   FolderPlusIcon,
   HistoryIcon,
+  BookOpenIcon,
   KanbanSquareIcon,
   SearchIcon,
   SettingsIcon,
@@ -2505,6 +2506,12 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     }
     void navigate({ to: "/board" });
   }, [isMobile, navigate, setOpenMobile]);
+  const handleWikiClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/wiki" });
+  }, [isMobile, navigate, setOpenMobile]);
 
   return (
     <SidebarFooter className="p-2">
@@ -2519,6 +2526,16 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
           >
             <KanbanSquareIcon className="size-3.5" />
             <span className="text-xs">Board</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            onClick={handleWikiClick}
+          >
+            <BookOpenIcon className="size-3.5" />
+            <span className="text-xs">Wiki</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>

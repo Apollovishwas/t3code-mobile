@@ -35,6 +35,9 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import { KanbanRepository } from "./persistence/Services/KanbanBoard.ts";
+import { layer as ProcessRunnerLive } from "./processRunner.ts";
+import { WikiWriter } from "./wiki/Services/WikiWriter.ts";
+import { WikiScheduler } from "./wiki/Services/WikiScheduler.ts";
 
 // The CLI test runtime mocks the Kanban services because some CLI commands
 // transitively pull in the provider driver layer whose env now declares
@@ -48,11 +51,28 @@ const KanbanTestMocks = Layer.mergeAll(
   Layer.mock(ProjectionSnapshotQuery)({
     getThreadShellById: () => Effect.succeed(Option.none()),
   }),
+  Layer.mock(WikiWriter)({
+    init: () => Effect.never as never,
+    captureFromThread: () => Effect.never as never,
+    garden: () => Effect.never as never,
+    healthRun: () => Effect.never as never,
+  }),
+  Layer.mock(WikiScheduler)({
+    list: () => Effect.succeed([]),
+    upsert: () => Effect.never as never,
+    remove: () => Effect.void,
+    start: () => Effect.void,
+  }),
 );
 const CliRuntimeLayer = Layer.mergeAll(
   NodeServices.layer,
   NetService.layer,
   KanbanTestMocks,
+  // ProcessRunner is pulled in transitively by the wiki detect route
+  // (slice 2) which the bin/CLI surface registers. Tests don't exercise
+  // it; providing the live layer is harmless because nothing actually
+  // spawns.
+  ProcessRunnerLive,
 );
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);

@@ -11,8 +11,31 @@ import { sharedServerCommandFlags } from "./cli/config.ts";
 import { diagnoseCommand } from "./cli/diagnose.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
+import { WikiWriter } from "./wiki/Services/WikiWriter.ts";
+import { WikiScheduler } from "./wiki/Services/WikiScheduler.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+// Empty stubs for cli-only commands that don't exercise wiki at all
+// (auth/project/diagnose). The full server runtime provides Live
+// implementations; these stubs satisfy the CLI's parser-side R channel.
+const CliWikiStubs = Layer.mergeAll(
+  Layer.mock(WikiWriter)({
+    init: () => Effect.never as never,
+    captureFromThread: () => Effect.never as never,
+    garden: () => Effect.never as never,
+    healthRun: () => Effect.never as never,
+  }),
+  Layer.mock(WikiScheduler)({
+    list: () => Effect.succeed([]),
+    upsert: () => Effect.never as never,
+    remove: () => Effect.void,
+    start: () => Effect.void,
+  }),
+);
+const CliRuntimeLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  CliWikiStubs,
+);
 
 export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription("Run the T3 Code server."),

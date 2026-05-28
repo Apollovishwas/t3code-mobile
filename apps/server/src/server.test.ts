@@ -118,6 +118,10 @@ import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import { AutomationRepository } from "./persistence/Services/Automations.ts";
 import { AutomationScheduler } from "./automation/Services/AutomationScheduler.ts";
 import { KanbanRepository } from "./persistence/Services/KanbanBoard.ts";
+import { WikiReader } from "./wiki/Services/WikiReader.ts";
+import { WikiWriter } from "./wiki/Services/WikiWriter.ts";
+import { WikiScheduler } from "./wiki/Services/WikiScheduler.ts";
+import { layer as ProcessRunnerLive } from "./processRunner.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -725,6 +729,82 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(WikiScheduler)({
+          list: () => Effect.succeed([]),
+          upsert: () =>
+            Effect.succeed({
+              projectId: "" as never,
+              enabled: false,
+              intervalMinutes: 60,
+              startedAtMs: 0,
+              lastFiredAtMs: null,
+              lastOutcome: null,
+            }),
+          remove: () => Effect.void,
+          start: () => Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(WikiWriter)({
+          init: () =>
+            Effect.succeed({
+              command: "almanac",
+              args: ["init"],
+              stdout: "",
+              stderr: "",
+              exitCode: 0,
+              timedOutMs: null,
+            }),
+          captureFromThread: () =>
+            Effect.succeed({
+              command: "almanac",
+              args: ["ingest"],
+              stdout: "",
+              stderr: "",
+              exitCode: 0,
+              timedOutMs: null,
+            }),
+          garden: () =>
+            Effect.succeed({
+              command: "almanac",
+              args: ["garden"],
+              stdout: "",
+              stderr: "",
+              exitCode: 0,
+              timedOutMs: null,
+            }),
+          healthRun: () =>
+            Effect.succeed({
+              command: "almanac",
+              args: ["health"],
+              stdout: "",
+              stderr: "",
+              exitCode: 0,
+              timedOutMs: null,
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(WikiReader)({
+          getStatus: () =>
+            Effect.succeed({ state: "not-initialized" as const, workspaceRoot: "" } as never),
+          listPages: () => Effect.succeed([]),
+          getPage: () => Effect.succeed(Option.none()),
+          searchPages: () => Effect.succeed([]),
+          getTopicTree: () => Effect.succeed([]),
+          getHealth: () =>
+            Effect.succeed({
+              pageCount: 0,
+              topicCount: 0,
+              orphanCount: 0,
+              staleCount: 0,
+              archivedCount: 0,
+              brokenLinkCount: 0,
+              schemaVersion: 3,
+            }),
+        }),
+      ),
+      Layer.provide(
         Layer.mock(KanbanRepository)({
           insertCard: () => Effect.void,
           updateCard: () => Effect.void,
@@ -992,7 +1072,9 @@ const getWsServerUrl = (
     );
   });
 
-it.layer(NodeServices.layer)("server router seam", (it) => {
+it.layer(Layer.provideMerge(ProcessRunnerLive, NodeServices.layer))(
+  "server router seam",
+  (it) => {
   it.effect("serves static index content for GET / when staticDir is configured", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -4434,4 +4516,5 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertFailure(result, terminalError);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
-});
+  },
+);

@@ -34,6 +34,7 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import { AutomationScheduler } from "./automation/Services/AutomationScheduler.ts";
+import { WikiScheduler } from "./wiki/Services/WikiScheduler.ts";
 import { checkForUpdate } from "./lifecycle/versionCheck.ts";
 import {
   formatHeadlessServeOutput,
@@ -286,6 +287,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const orchestrationReactor = yield* OrchestrationReactor;
   const providerSessionReaper = yield* ProviderSessionReaper;
   const automationScheduler = yield* AutomationScheduler;
+  const wikiScheduler = yield* WikiScheduler;
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
@@ -334,6 +336,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
         yield* automationScheduler.start().pipe(Scope.provide(reactorScope));
+        yield* wikiScheduler.start().pipe(Scope.provide(reactorScope));
       }),
     );
 

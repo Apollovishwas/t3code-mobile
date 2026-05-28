@@ -9,11 +9,13 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WikiRouteImport } from './routes/wiki'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as BoardRouteImport } from './routes/board'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SettingsWikiRouteImport } from './routes/settings.wiki'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
@@ -25,7 +27,13 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as BoardCardCardIdRouteImport } from './routes/board_.card.$cardId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as WikiProjectIdPageSlugRouteImport } from './routes/wiki_.$projectId.page.$slug'
 
+const WikiRoute = WikiRouteImport.update({
+  id: '/wiki',
+  path: '/wiki',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -49,6 +57,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SettingsWikiRoute = SettingsWikiRouteImport.update({
+  id: '/wiki',
+  path: '/wiki',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
@@ -106,12 +119,18 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const WikiProjectIdPageSlugRoute = WikiProjectIdPageSlugRouteImport.update({
+  id: '/wiki_/$projectId/page/$slug',
+  path: '/wiki/$projectId/page/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/board': typeof BoardRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/wiki': typeof WikiRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/automations': typeof SettingsAutomationsRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -120,14 +139,17 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/wiki': typeof SettingsWikiRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/board/card/$cardId': typeof BoardCardCardIdRoute
+  '/wiki/$projectId/page/$slug': typeof WikiProjectIdPageSlugRoute
 }
 export interface FileRoutesByTo {
   '/board': typeof BoardRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/wiki': typeof WikiRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/automations': typeof SettingsAutomationsRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -136,10 +158,12 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/wiki': typeof SettingsWikiRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/board/card/$cardId': typeof BoardCardCardIdRoute
+  '/wiki/$projectId/page/$slug': typeof WikiProjectIdPageSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -147,6 +171,7 @@ export interface FileRoutesById {
   '/board': typeof BoardRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/wiki': typeof WikiRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/automations': typeof SettingsAutomationsRoute
   '/settings/connections': typeof SettingsConnectionsRoute
@@ -155,10 +180,12 @@ export interface FileRoutesById {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/settings/wiki': typeof SettingsWikiRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/board_/card/$cardId': typeof BoardCardCardIdRoute
+  '/wiki_/$projectId/page/$slug': typeof WikiProjectIdPageSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -167,6 +194,7 @@ export interface FileRouteTypes {
     | '/board'
     | '/pair'
     | '/settings'
+    | '/wiki'
     | '/settings/archived'
     | '/settings/automations'
     | '/settings/connections'
@@ -175,14 +203,17 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/wiki'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/board/card/$cardId'
+    | '/wiki/$projectId/page/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/board'
     | '/pair'
     | '/settings'
+    | '/wiki'
     | '/settings/archived'
     | '/settings/automations'
     | '/settings/connections'
@@ -191,16 +222,19 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/wiki'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/board/card/$cardId'
+    | '/wiki/$projectId/page/$slug'
   id:
     | '__root__'
     | '/_chat'
     | '/board'
     | '/pair'
     | '/settings'
+    | '/wiki'
     | '/settings/archived'
     | '/settings/automations'
     | '/settings/connections'
@@ -209,10 +243,12 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/settings/wiki'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/board_/card/$cardId'
+    | '/wiki_/$projectId/page/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -220,11 +256,20 @@ export interface RootRouteChildren {
   BoardRoute: typeof BoardRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  WikiRoute: typeof WikiRoute
   BoardCardCardIdRoute: typeof BoardCardCardIdRoute
+  WikiProjectIdPageSlugRoute: typeof WikiProjectIdPageSlugRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/wiki': {
+      id: '/wiki'
+      path: '/wiki'
+      fullPath: '/wiki'
+      preLoaderRoute: typeof WikiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings': {
       id: '/settings'
       path: '/settings'
@@ -259,6 +304,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/settings/wiki': {
+      id: '/settings/wiki'
+      path: '/wiki'
+      fullPath: '/settings/wiki'
+      preLoaderRoute: typeof SettingsWikiRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/settings/source-control': {
       id: '/settings/source-control'
@@ -337,6 +389,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/wiki_/$projectId/page/$slug': {
+      id: '/wiki_/$projectId/page/$slug'
+      path: '/wiki/$projectId/page/$slug'
+      fullPath: '/wiki/$projectId/page/$slug'
+      preLoaderRoute: typeof WikiProjectIdPageSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -363,6 +422,7 @@ interface SettingsRouteChildren {
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
+  SettingsWikiRoute: typeof SettingsWikiRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
@@ -374,6 +434,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
+  SettingsWikiRoute: SettingsWikiRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
@@ -385,7 +446,9 @@ const rootRouteChildren: RootRouteChildren = {
   BoardRoute: BoardRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  WikiRoute: WikiRoute,
   BoardCardCardIdRoute: BoardCardCardIdRoute,
+  WikiProjectIdPageSlugRoute: WikiProjectIdPageSlugRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
