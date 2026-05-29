@@ -65,17 +65,55 @@ node apps/server/dist/bin.mjs start \
 
 State (SQLite, secrets, logs) lives under `~/.t3/userdata/`. A pre-migration backup of `state.sqlite` is automatically written beside the live DB before each migration.
 
-### Mobile access via Tailscale (optional but the whole point)
+### Mobile access via Tailscale (the whole point)
+
+Run the guided walkthrough — it detects the Tailscale CLI, prompts you through login, confirms MagicDNS, sets up `tailscale serve`, probes the URL, and prints the address ready for your phone:
 
 ```bash
-# 1. Install Tailscale, log in, get this machine on the tailnet.
-# 2. Enable HTTPS for your tailnet (Tailscale admin → DNS → MagicDNS + HTTPS).
-# 3. Front T3 with Tailscale serve (rootless, runs as your user):
-
-tailscale serve --bg --https 443 http://127.0.0.1:3773
+node apps/server/dist/bin.mjs setup-mobile
 ```
 
-Then on your phone — same tailnet — open `https://<this-machine>.<tailnet>.ts.net`, hit the pairing URL once, then "Add to home screen" for the PWA.
+Step-by-step output looks like:
+
+```
+T3 Code — mobile setup walkthrough
+===================================
+
+1. Checking for the Tailscale CLI…
+   ✓ Tailscale CLI found.
+
+2. Checking Tailscale login state…
+   ✓ Logged in.
+
+3. Checking MagicDNS…
+   ✓ MagicDNS name: my-laptop.tail-scales.ts.net
+
+4. Setting up tailscale serve --https=443 → http://127.0.0.1:3773
+   ✓ Serve is up.
+
+5. Probing the HTTPS endpoint…
+   ✓ Reachable at https://my-laptop.tail-scales.ts.net
+
+📱 Open this URL on your phone (same tailnet):
+   https://my-laptop.tail-scales.ts.net
+
+Next:
+  1. Visit the pairing URL printed by `t3 start` once.
+  2. Add to home screen for the PWA.
+  3. Tear down later with: tailscale serve --https=443 off
+```
+
+Each step is idempotent — if any check fails the command prints the exact next command to run (install one-liner / `tailscale up` / the admin URL for MagicDNS) and exits. Re-run after fixing.
+
+Flags:
+
+```bash
+node apps/server/dist/bin.mjs setup-mobile \
+  --port 3773 \          # local T3 port (default 3773)
+  --host 127.0.0.1 \     # local interface (default 127.0.0.1)
+  --https-port 443 \     # Tailscale HTTPS port (default 443)
+  --skip-probe           # skip the final reachability check
+```
 
 ### Health check
 

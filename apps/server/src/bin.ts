@@ -9,6 +9,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { diagnoseCommand } from "./cli/diagnose.ts";
+import { setupMobileCommand } from "./cli/setupMobile.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { WikiWriter } from "./wiki/Services/WikiWriter.ts";
@@ -46,6 +47,7 @@ export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
     authCommand,
     projectCommand,
     diagnoseCommand,
+    setupMobileCommand,
   ]),
 );
 
