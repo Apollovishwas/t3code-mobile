@@ -749,6 +749,87 @@ function buildBoardSystemPromptAppend(): string {
 }
 
 /**
+ * Static system-prompt block that tells the agent about the per-project
+ * Wiki at `<workspaceRoot>/.t3/wiki/`. The wiki is filesystem-native —
+ * unlike the Kanban board (which uses HTTP because the user can't edit
+ * cards in the UI), the wiki is just markdown files. The agent uses
+ * normal Read / Write / Edit / Glob tools — no curl, no API key, no
+ * subprocess. All work happens inside this session, so it's covered by
+ * the user's existing Claude Code subscription.
+ *
+ * The agent should treat the wiki as durable project memory: things
+ * that survive past this conversation and that future-you (and future-
+ * sessions) will want to know.
+ */
+function buildWikiSystemPromptAppend(): string {
+  return [
+    "",
+    "## T3 Code Project Wiki",
+    "",
+    "This project has a per-project wiki at `<workspaceRoot>/.t3/wiki/`.",
+    "Each page is one markdown file: `.t3/wiki/<slug>.md`. The wiki is",
+    "**your durable project memory** — write a page when you learn",
+    "something the user would want future sessions to remember.",
+    "",
+    "### When to update the wiki",
+    "",
+    "Be proactive. After non-trivial work in this thread, ask yourself:",
+    "*\"Is there a fact about this codebase, decision, or gotcha that",
+    "future Claude sessions would benefit from knowing?\"* If yes, write",
+    "or update a wiki page using the `Write` or `Edit` tool.",
+    "",
+    "Always update the wiki when the user says any of:",
+    "- *\"Remember this\"*, *\"note this down\"*, *\"document this\"*",
+    "- Slash commands: `/wiki:learn`, `/wiki:note`, `/wiki:capture`",
+    "- *\"Why did we…\"* (write the answer down so they don't have to ask again)",
+    "",
+    "When the user says `/wiki:query <topic>` or asks *\"what does the",
+    "wiki say about X\"*, use `Glob` and `Read` against `.t3/wiki/` to",
+    "look it up. When they say `/wiki:lint`, walk every page and look",
+    "for stale facts, broken `[[wikilinks]]`, or duplicate topics —",
+    "report findings and offer to fix.",
+    "",
+    "### Page format",
+    "",
+    "```markdown",
+    "---",
+    "title: Refresh token rotation",
+    "summary: Tokens rotate every 15 minutes.",
+    "topics: [auth, sessions]",
+    "file_refs:",
+    "  - src/auth/tokens.ts",
+    "updated_at: <epoch ms — set to Date.now() when you write>",
+    "archived: false",
+    "---",
+    "",
+    "Tokens rotate every 15m. Old refresh tokens are invalidated on use.",
+    "",
+    "Related: [[checkout-flow]].",
+    "```",
+    "",
+    "Rules:",
+    "- **Slug** = kebab-case filename without `.md`. Stable; don't rename",
+    "  carelessly because `[[wikilinks]]` and the Wiki UI key on it.",
+    "- **Topics** are flat slugs (no DAG yet); reuse existing topic slugs",
+    "  when sensible (list them with `Glob .t3/wiki/*.md` + `grep topics:`).",
+    "- **`[[slug]]`** = link to another page. The Wiki UI renders backlinks.",
+    "- **`updated_at`** — always bump on edits; T3's Wiki UI sorts by it.",
+    "- **`archived: true`** — soft-delete; the UI hides archived pages by",
+    "  default. Use instead of `rm` when content is obsolete but historically",
+    "  interesting.",
+    "- Filenames starting with `_` (e.g. `_skeleton.md`) are reserved for",
+    "  T3-managed artifacts; never write to those.",
+    "",
+    "### Bootstrapping",
+    "",
+    "If `.t3/wiki/` doesn't exist, the user can hit *Initialise wiki here*",
+    "in T3's Wiki UI to scaffold it. Or you can `mkdir -p .t3/wiki/` and",
+    "write the first page yourself if they ask.",
+    "",
+  ].join("\n");
+}
+
+/**
  * Per-turn board context: looks up the thread's projectId, counts cards
  * per column for that project, and renders a small markdown block the
  * agent can read at zero curl cost. Returns "" when the thread isn't
@@ -3180,7 +3261,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           //   2. A per-thread board state summary (this turn's project
           //      + counts per column + In Progress titles) so the agent
           //      can answer "what's on my board" without a curl call.
-          append: buildBoardSystemPromptAppend() + boardContextAppend,
+          append:
+            buildBoardSystemPromptAppend() +
+            boardContextAppend +
+            buildWikiSystemPromptAppend(),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though

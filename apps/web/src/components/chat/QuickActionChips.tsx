@@ -37,6 +37,12 @@ export const DEFAULT_QUICK_ACTION_CHIPS: readonly QuickActionChip[] = [
   { label: "Explain", text: "Explain what you just did and why." },
   { label: "Undo", text: "Undo that change." },
   { label: "Try again", text: "Try that again with a different approach." },
+  // Wiki shortcuts — the agent knows about `.t3/wiki/` from the per-session
+  // system-prompt append in ClaudeAdapter.ts (`buildWikiSystemPromptAppend`).
+  // Tapping these expands to the slash-command phrase the agent is told to
+  // recognise; nothing server-side intercepts them.
+  { label: "📚 Note this", text: "/wiki:learn — add this to the wiki." },
+  { label: "📚 Ask the wiki", text: "/wiki:query — what does the wiki say about this?" },
 ];
 
 /**

@@ -210,10 +210,11 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(WikiReaderLive),
   Layer.provideMerge(WikiWriterLive),
   Layer.provideMerge(WikiSchedulerLive),
-  // ProcessRunner powers both the `/api/wiki/detect` probe (slice 2)
-  // and the writer that spawns `almanac capture` (slice 4). VcsProcess
-  // and ServerEnvironment have their own provisions; this one ensures
-  // the wiki HTTP layer can reach it.
+  // ProcessRunner was added for the Almanac-era writer (`almanac capture`)
+  // and detect probe; the DIY wiki rewrite no longer spawns subprocesses,
+  // but we keep the provision here because other consumers (VcsProcess,
+  // ServerEnvironment) provide it via their own layer chains and this
+  // top-level provision is a cheap belt-and-braces for any future tooling.
   Layer.provideMerge(ProcessRunnerLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
 );

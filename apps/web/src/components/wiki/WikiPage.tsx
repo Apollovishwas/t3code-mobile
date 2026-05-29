@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import {
   ArrowLeftIcon,
   BookOpenIcon,
   ChevronRightIcon,
+  PlayIcon,
   RefreshCwIcon,
   SearchIcon,
   TerminalIcon,
@@ -200,6 +201,7 @@ export function WikiPage({ projects }: WikiPageProps) {
         <InstallPanel
           workspaceRoot={statusQuery.data.status.workspaceRoot}
           detected={detectQuery.data?.almanac}
+          projectId={effectiveProjectId}
         />
       ) : statusQuery.data?.status.state === "unsupported-schema" ? (
         <EmptyState
@@ -327,68 +329,98 @@ function EmptyState({ message }: { readonly message: string }) {
   );
 }
 
+interface InitResponse {
+  readonly result: {
+    readonly exitCode: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+  };
+}
+
 function InstallPanel({
   workspaceRoot,
   detected,
+  projectId,
 }: {
   readonly workspaceRoot: string;
   readonly detected: DetectResponse["almanac"] | undefined;
+  readonly projectId: ProjectId;
 }) {
+  const queryClient = useQueryClient();
+  const initMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/wiki/init", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId }),
+      });
+      const body = (await response.json()) as InitResponse | { error: string };
+      if (!response.ok) {
+        throw new Error("error" in body ? body.error : `HTTP ${response.status}`);
+      }
+      const result = (body as InitResponse).result;
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `almanac init exited ${result.exitCode}: ${result.stderr || result.stdout}`,
+        );
+      }
+      return result;
+    },
+    onSuccess: () => {
+      // Refetch status — should flip to "ready" once .almanac/index.db lands.
+      queryClient.invalidateQueries({ queryKey: ["wiki", "status", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["wiki", "topics", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["wiki", "list", projectId] });
+    },
+  });
+
+  const canInit = detected?.state === "found";
+
+  // `detected` is kept on the props for backward compat with B10 but the
+  // server-side detect endpoint now always reports `found` for the DIY
+  // markdown backend. We could drop the check entirely; we keep it so
+  // ancient cached PWA bundles don't break.
+  void detected;
+
   return (
     <div className="flex flex-1 items-center justify-center px-6">
-      <div className="max-w-lg space-y-3 text-sm">
+      <div className="max-w-lg space-y-4 text-sm">
         <div className="flex items-center gap-2">
           <TerminalIcon className="size-4 text-muted-foreground" />
           <h2 className="font-semibold">No wiki yet for this project</h2>
         </div>
         <p className="text-muted-foreground">
-          T3 reads <code className="rounded-sm bg-muted px-1">{workspaceRoot}/.almanac/index.db</code>.
-          You need the <code className="rounded-sm bg-muted px-1">codealmanac</code> CLI to create
-          it.
+          T3 stores wiki pages as markdown in{" "}
+          <code className="rounded-sm bg-muted px-1">
+            {workspaceRoot}/.t3/wiki/
+          </code>
+          . Click below to create the folder; the agent maintains pages from then
+          on, using your existing Claude Code subscription — no API key, no
+          external CLI, no extra billing.
         </p>
-        {detected === undefined ? (
-          <p className="text-xs text-muted-foreground">Checking your PATH…</p>
-        ) : detected.state === "found" ? (
-          <>
-            <p className="text-xs text-emerald-700">
-              ✓ Almanac CLI detected ({detected.version}).
-            </p>
-            <p>From a terminal in the project root:</p>
-            <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs">
-              cd {workspaceRoot}
-              <br />
-              almanac init
+        <button
+          type="button"
+          onClick={() => initMutation.mutate()}
+          disabled={initMutation.isPending}
+          className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+        >
+          <PlayIcon className="size-4" />
+          {initMutation.isPending ? "Initialising…" : "Initialise wiki here"}
+        </button>
+        <p className="text-[11px] text-muted-foreground">
+          Creates <code>.t3/wiki/index.md</code>. Commit it to git so the wiki
+          survives clones. Ask Claude in any thread to write the first real
+          page.
+        </p>
+        {initMutation.isError ? (
+          <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-700">
+            <div className="font-medium">Init failed</div>
+            <pre className="mt-1 whitespace-pre-wrap break-words">
+              {(initMutation.error as Error).message}
             </pre>
-            <p className="text-xs text-muted-foreground">
-              Then refresh this page. T3 will pick up the new <code>.almanac/</code> automatically.
-            </p>
-          </>
-        ) : detected.state === "broken" ? (
-          <>
-            <p className="text-xs text-amber-700">
-              ⚠ Almanac is installed but its launcher is broken (often because the pinned Node
-              binary moved). Reinstall:
-            </p>
-            <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs">
-              npm i -g codealmanac
-            </pre>
-            {detected.detail ? (
-              <pre className="overflow-x-auto rounded-md bg-card px-3 py-2 text-[11px] text-muted-foreground">
-                {detected.detail}
-              </pre>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <p className="text-xs">Install Almanac:</p>
-            <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs">
-              npm i -g codealmanac
-            </pre>
-            <p className="text-xs text-muted-foreground">
-              Then run <code>almanac init</code> in {workspaceRoot} and refresh.
-            </p>
-          </>
-        )}
+          </div>
+        ) : null}
       </div>
     </div>
   );
