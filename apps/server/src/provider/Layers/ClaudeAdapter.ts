@@ -2463,6 +2463,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       },
     };
 
+    // Newer Claude Code CLIs (2.1.x+) emit high-frequency streaming progress
+    // subtypes that aren't in the SDK's typed `subtype` union yet — notably
+    // `thinking_tokens`, which fires ~once a second during extended thinking.
+    // Without this guard they fall through to the default branch and flood
+    // the work log with hundreds of "Runtime warning" entries per turn.
+    // Thinking is already shown via the reasoning stream, so ignore them.
+    const rawSubtype = message.subtype as unknown as string;
+    if (rawSubtype === "thinking_tokens") {
+      return;
+    }
+
     switch (message.subtype) {
       case "init":
         yield* offerRuntimeEvent({
