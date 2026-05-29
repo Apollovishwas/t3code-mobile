@@ -123,6 +123,7 @@ import {
   getWsConnectionUiState,
   useWsConnectionStatus,
 } from "../../rpc/wsConnectionState";
+import { haptic } from "../../lib/haptics";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -1769,6 +1770,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }) => {
+      haptic("action");
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();

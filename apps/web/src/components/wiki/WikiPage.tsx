@@ -19,6 +19,8 @@ import type {
 } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { haptic } from "~/lib/haptics";
+import { Skeleton } from "../ui/skeleton";
 
 /**
  * Read-only Wiki page — browse the project's wiki on mobile or desktop.
@@ -219,7 +221,10 @@ export function WikiPage({ projects }: WikiPageProps) {
           {ready ? (
             <button
               type="button"
-              onClick={() => syncMutation.mutate()}
+              onClick={() => {
+                haptic("action");
+                syncMutation.mutate();
+              }}
               disabled={syncMutation.isPending || effectiveProjectId === null}
               aria-label="Sync wiki now"
               title="Run a one-time wiki sweep on this project's latest thread"
@@ -272,7 +277,7 @@ export function WikiPage({ projects }: WikiPageProps) {
       {effectiveProjectId === null ? (
         <EmptyState message="No projects yet — add one to start a wiki." />
       ) : statusQuery.isLoading ? (
-        <EmptyState message="Loading wiki status…" />
+        <WikiListSkeleton />
       ) : statusQuery.isError ? (
         <EmptyState
           message={`Failed to load wiki status: ${(statusQuery.error as Error).message}`}
@@ -405,6 +410,25 @@ function EmptyState({ message }: { readonly message: string }) {
   return (
     <div className="flex flex-1 items-center justify-center px-6 text-center">
       <p className="max-w-md text-sm text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+/** Content-shaped placeholder shown while the wiki status/list loads —
+ *  feels faster than a centered spinner. */
+function WikiListSkeleton() {
+  return (
+    <div className="flex-1 space-y-3 px-3 py-4 sm:px-4">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="space-y-2 rounded-md border border-border/60 p-3">
+          <Skeleton className="h-4 w-1/2" />
+          <Skeleton className="h-3 w-4/5" />
+          <div className="flex gap-1.5 pt-1">
+            <Skeleton className="h-3.5 w-12 rounded-sm" />
+            <Skeleton className="h-3.5 w-10 rounded-sm" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

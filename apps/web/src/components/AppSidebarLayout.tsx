@@ -2,7 +2,9 @@ import { useEffect, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
+import { BottomTabBar } from "./BottomTabBar";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
+import { useIsMobile } from "~/hooks/useMediaQuery";
 import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
@@ -24,6 +26,7 @@ function mainContentMinWidth(wrapperWidth: number): number {
 }
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -65,7 +68,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   return (
-    <SidebarProvider className="h-[calc(100dvh-var(--keyboard-inset,0px))]! min-h-0!" defaultOpen>
+    // Shell height subtracts BOTH the on-screen-keyboard inset and the
+    // mobile bottom-tab-bar inset (set by BottomTabBar while mounted, 0 on
+    // iPad/desktop or when the keyboard is open) so route content always
+    // lays out above the bar and never hides behind it.
+    <SidebarProvider
+      className="h-[calc(100dvh-var(--keyboard-inset,0px)-var(--bottom-nav-inset,0px))]! min-h-0!"
+      defaultOpen
+    >
       <Sidebar
         side="left"
         collapsible="offcanvas"
@@ -81,6 +91,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarRail />
       </Sidebar>
       {children}
+      {/* Phone-only bottom nav; iPad+ keeps the left sidebar. */}
+      {isMobile ? <BottomTabBar /> : null}
     </SidebarProvider>
   );
 }
