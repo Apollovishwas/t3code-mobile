@@ -833,6 +833,59 @@ function buildWikiSystemPromptAppend(): string {
 }
 
 /**
+ * Static block teaching the agent how to run long-running processes —
+ * dev servers, watchers, anything that doesn't terminate on its own.
+ *
+ * Why this matters: the agent's Bash tool runs inside T3's own systemd
+ * cgroup. A foreground `next dev` / `vite` / `npm run dev` both (a)
+ * never returns, blocking the turn, and (b) spikes memory in the shared
+ * cgroup during compile — on a host without swap headroom that triggers
+ * an OOM kill that can take down the T3 server itself. So we instruct
+ * the agent to ALWAYS background long-running servers and cap their
+ * heap, rather than run them as blocking foreground commands.
+ */
+function buildLongRunningProcessSystemPromptAppend(): string {
+  return [
+    "",
+    "## Running dev servers & long-running processes",
+    "",
+    "Your Bash tool runs inside T3's own server process group. A foreground",
+    "command that never exits (a dev server, file watcher, `tail -f`, etc.)",
+    "will block your turn AND, if it spikes memory during compile, can OOM-kill",
+    "the T3 server you're running inside. **Never** start a long-running",
+    "server as a blocking foreground command.",
+    "",
+    "Instead, when you need to run a dev server (`next dev`, `vite`,",
+    "`npm run dev`, `npm start`, etc.):",
+    "",
+    "- **Background it, cap its heap, and redirect output to a log file:**",
+    "  ```bash",
+    "  cd <project> && \\",
+    "    NODE_OPTIONS=--max-old-space-size=1536 nohup npm run dev \\",
+    "    > /tmp/<name>-dev.log 2>&1 &",
+    "  ```",
+    "  Then poll the log to confirm it came up:",
+    "  ```bash",
+    "  sleep 4 && tail -n 30 /tmp/<name>-dev.log",
+    "  ```",
+    "- **Check it's serving** with a one-shot curl (which DOES terminate):",
+    "  ```bash",
+    "  curl -s -o /dev/null -w '%{http_code}' http://localhost:3000",
+    "  ```",
+    "- **Stop the old one before starting a new one** so they don't stack:",
+    "  ```bash",
+    "  pkill -f 'next dev' || true",
+    "  ```",
+    "",
+    "Prefer the smallest viable memory cap (`--max-old-space-size=1536` =",
+    "1.5 GB) — dev servers balloon without one. For a production build",
+    "(`next build`), the same heap-cap + foreground is fine because it",
+    "terminates; just don't run it concurrently with a dev server.",
+    "",
+  ].join("\n");
+}
+
+/**
  * Per-turn board context: looks up the thread's projectId, counts cards
  * per column for that project, and renders a small markdown block the
  * agent can read at zero curl cost. Returns "" when the thread isn't
@@ -3267,7 +3320,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           append:
             buildBoardSystemPromptAppend(serverConfig.port) +
             boardContextAppend +
-            buildWikiSystemPromptAppend(),
+            buildWikiSystemPromptAppend() +
+            buildLongRunningProcessSystemPromptAppend(),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
