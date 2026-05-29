@@ -49,7 +49,45 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
 } as const;
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+// 4.8 is gated at the earliest Claude Code CLI we've verified runs it
+// (2.1.156, the version this fork was built against). Conservative: we
+// don't claim support on older CLIs we haven't tested.
+const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.156";
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        buildSelectOptionDescriptor({
+          id: "effort",
+          label: "Reasoning",
+          options: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "Extra High", isDefault: true },
+            { value: "max", label: "Max" },
+            { value: "ultrathink", label: "Ultrathink" },
+          ],
+          promptInjectedValues: ["ultrathink"],
+        }),
+        buildBooleanOptionDescriptor({
+          id: "fastMode",
+          label: "Fast Mode",
+        }),
+        buildSelectOptionDescriptor({
+          id: "contextWindow",
+          label: "Context Window",
+          options: [
+            { value: "200k", label: "200k", isDefault: true },
+            { value: "1m", label: "1M" },
+          ],
+        }),
+      ],
+    }),
+  },
   {
     slug: "claude-opus-4-7",
     name: "Claude Opus 4.7",
@@ -183,13 +221,20 @@ function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
 
+function supportsClaudeOpus48(version: string | null | undefined): boolean {
+  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_8_VERSION) >= 0 : false;
+}
+
 function getBuiltInClaudeModelsForVersion(
   version: string | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
-  if (supportsClaudeOpus47(version)) {
-    return BUILT_IN_MODELS;
-  }
-  return BUILT_IN_MODELS.filter((model) => model.slug !== "claude-opus-4-7");
+  // Each newest top model is gated behind a minimum CLI version so we
+  // don't advertise a model the installed Claude Code can't run.
+  return BUILT_IN_MODELS.filter((model) => {
+    if (model.slug === "claude-opus-4-8" && !supportsClaudeOpus48(version)) return false;
+    if (model.slug === "claude-opus-4-7" && !supportsClaudeOpus47(version)) return false;
+    return true;
+  });
 }
 
 function formatClaudeOpus47UpgradeMessage(version: string | null): string {
