@@ -1,6 +1,100 @@
-# T3 Code
+# T3 Code — mobile-first fork
 
-T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and OpenCode, more coming soon).
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code) tuned for driving Claude Code from a phone or tablet over [Tailscale](https://tailscale.com). It carries everything in upstream plus:
+
+- **PWA install** — add to home screen on iOS / Android.
+- **Per-project Kanban board** at `/board` — read-only UI; Claude is the only mutator.
+- **Per-project Wiki** at `/wiki` — living markdown docs at `<repo>/.t3/wiki/` that Claude maintains during normal chat. No API key, no separate billing. Browseable + searchable from the phone.
+- **Scheduled automations** — server-side cron-ish triggers that fire prompts into existing threads.
+- **Quick-action chips** in the composer for one-tap mobile replies.
+- **Web Push notifications** when an agent turn completes or needs review.
+- **Composer mascot** because why not.
+- Lots of mobile-keyboard, scroll-jump, and reconnection fixes.
+
+## Quickstart — clone & run (from source)
+
+You'll be hacking on the code; this is the dev path. If you just want to *use* T3 Code, the upstream `npx t3` works fine.
+
+### Prerequisites
+
+- **Node ≥ 22.16** (uses built-in `node:sqlite`)
+- **Bun ≥ 1.3** (used by the workspace tooling for `bun install`; runtime uses Node)
+- **One coding-agent CLI** authenticated on this host:
+  - Claude Code — `npm i -g @anthropic-ai/claude-code` then `claude` (use `/login`)
+  - or Codex — install [Codex CLI](https://developers.openai.com/codex/cli) and `codex login`
+  - or OpenCode — install [OpenCode](https://opencode.ai) and `opencode auth login`
+- macOS or Linux. Windows works for the server but I don't dogfood it.
+
+### Clone + install
+
+```bash
+git clone https://github.com/Apollovishwas/t3code-mobile.git
+cd t3code-mobile
+bun install
+```
+
+### Run the server (dev mode — hot reload)
+
+```bash
+# From repo root: builds the web bundle once, then starts the server with watch.
+bun run --filter @t3tools/server dev
+```
+
+Open `http://localhost:3773` — first run prints a one-time pairing URL like:
+
+```
+Open http://localhost:3773/pair#token=ABCD1234EFGH in your browser.
+```
+
+Visit that URL once from the browser you'll use; the session cookie is stored and you can ditch the token.
+
+### Build & run a production bundle
+
+```bash
+# One-shot build (web bundle → server dist).
+bun run --filter @t3tools/web build
+bun run --filter @t3tools/server build
+
+# Run the bundled server.
+node apps/server/dist/bin.mjs start \
+  --base-dir ~/.t3 \
+  --port 3773 \
+  --host 127.0.0.1 \
+  --no-browser
+```
+
+State (SQLite, secrets, logs) lives under `~/.t3/userdata/`. A pre-migration backup of `state.sqlite` is automatically written beside the live DB before each migration.
+
+### Mobile access via Tailscale (optional but the whole point)
+
+```bash
+# 1. Install Tailscale, log in, get this machine on the tailnet.
+# 2. Enable HTTPS for your tailnet (Tailscale admin → DNS → MagicDNS + HTTPS).
+# 3. Front T3 with Tailscale serve (rootless, runs as your user):
+
+tailscale serve --bg --https 443 http://127.0.0.1:3773
+```
+
+Then on your phone — same tailnet — open `https://<this-machine>.<tailnet>.ts.net`, hit the pairing URL once, then "Add to home screen" for the PWA.
+
+### Health check
+
+```bash
+curl http://127.0.0.1:3773/health
+# {"status":"ok","package":"t3","version":"0.0.24","uptimeSeconds":42,"dbMigrationHead":33,"nodeVersion":"v22.22.0"}
+```
+
+### Diagnostics
+
+```bash
+node apps/server/dist/bin.mjs diagnose --tail-log-lines 50
+```
+
+Prints a copy-pasteable markdown block with version / runtime / migration head / last log lines. Useful when something's off and you want to share state without copying twelve files.
+
+---
+
+## Upstream README continues below
 
 ## Installation
 
