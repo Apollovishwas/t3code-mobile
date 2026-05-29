@@ -29,6 +29,7 @@ const CliWikiStubs = Layer.mergeAll(
     list: () => Effect.succeed([]),
     upsert: () => Effect.never as never,
     remove: () => Effect.void,
+    runOnce: () => Effect.never as never,
     start: () => Effect.void,
   }),
 );

@@ -742,6 +742,7 @@ const buildAppUnderTest = (options?: {
               lastOutcome: null,
             }),
           remove: () => Effect.void,
+          runOnce: () => Effect.succeed({ kind: "skipped", reason: "test" }),
           start: () => Effect.void,
         }),
       ),

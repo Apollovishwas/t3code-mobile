@@ -100,6 +100,127 @@ const make = Effect.gen(function* () {
       return copy;
     });
 
+  /**
+   * Core sweep dispatch for a single project. Shared by the scheduled
+   * `tick` and the on-demand `runOnce`. When `ignoreQuietWindow` is true
+   * (the manual "Sync now" path) we skip the hot-thread guard — the user
+   * explicitly asked for it, so interrupting an active thread is fine.
+   */
+  const dispatchSweepForProject = (
+    projectId: ProjectId,
+    nowMs: number,
+    options: { readonly ignoreQuietWindow: boolean },
+  ): Effect.Effect<NonNullable<WikiSchedule["lastOutcome"]>> =>
+    Effect.gen(function* () {
+      const shellResult = yield* snapshot
+        .getShellSnapshot()
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      if (!shellResult) {
+        return { kind: "failed", error: "Could not read project snapshot" };
+      }
+      const shell = shellResult as unknown as {
+        threads: ReadonlyArray<{
+          readonly id: string;
+          readonly projectId?: string;
+          readonly updatedAt?: string | number;
+        }>;
+      };
+      const candidate = shell.threads
+        .filter((t) => t.projectId === projectId)
+        .sort((a, b) => {
+          const av = typeof a.updatedAt === "number" ? a.updatedAt : Date.parse(String(a.updatedAt));
+          const bv = typeof b.updatedAt === "number" ? b.updatedAt : Date.parse(String(b.updatedAt));
+          return (bv || 0) - (av || 0);
+        })[0];
+
+      if (!candidate) {
+        return { kind: "skipped", reason: "No threads in this project yet" };
+      }
+
+      if (!options.ignoreQuietWindow) {
+        const candidateUpdatedMs =
+          typeof candidate.updatedAt === "number"
+            ? candidate.updatedAt
+            : Date.parse(String(candidate.updatedAt));
+        const isHot =
+          Number.isFinite(candidateUpdatedMs) &&
+          candidateUpdatedMs > nowMs - QUIET_THRESHOLD_MS;
+        if (isHot) {
+          return {
+            kind: "skipped",
+            reason: `Thread is active (touched ${Math.round((nowMs - candidateUpdatedMs) / 1000)}s ago)`,
+          };
+        }
+      }
+
+      const commandId = CommandId.make(`wiki-sweep:${projectId}:${nowMs}`);
+      const messageId = MessageId.make(`wiki-sweep-${projectId}-${nowMs}`);
+      const createdAt = yield* nowIso.pipe(Effect.map(IsoDateTime.make));
+      return yield* orchestrationEngine
+        .dispatch({
+          type: "thread.turn.start",
+          commandId,
+          threadId: ThreadId.make(candidate.id),
+          message: {
+            messageId,
+            role: "user",
+            text: WIKI_REVIEW_PROMPT,
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt,
+        })
+        .pipe(
+          Effect.match({
+            onSuccess: (): NonNullable<WikiSchedule["lastOutcome"]> => ({
+              kind: "success",
+              capturedMessages: 1,
+            }),
+            onFailure: (err): NonNullable<WikiSchedule["lastOutcome"]> => ({
+              kind: "failed",
+              error:
+                err instanceof Error
+                  ? err.message
+                  : typeof err === "object" && err !== null && "message" in err
+                    ? String((err as { message: unknown }).message)
+                    : "Unknown dispatch error",
+            }),
+          }),
+        );
+    });
+
+  const recordOutcome = (
+    projectId: ProjectId,
+    nowMs: number,
+    outcome: NonNullable<WikiSchedule["lastOutcome"]>,
+  ) =>
+    // Only advance `lastFiredAtMs` on actual dispatches. Skipping a hot
+    // thread must NOT stamp the timestamp or it defers the next fire by
+    // another full interval and starves active projects.
+    Ref.update(schedules, (map) => {
+      const existing = map.get(projectId);
+      if (!existing) return map; // manual run on an unscheduled project — nothing to record
+      const advanceTimestamp = outcome.kind === "success" || outcome.kind === "failed";
+      const copy = new Map(map);
+      copy.set(projectId, {
+        ...existing,
+        lastFiredAtMs: advanceTimestamp ? nowMs : existing.lastFiredAtMs,
+        lastOutcome: outcome,
+      });
+      return copy;
+    });
+
+  const runOnce: WikiSchedulerShape["runOnce"] = (projectId) =>
+    Effect.gen(function* () {
+      const nowMs = yield* Clock.currentTimeMillis;
+      const outcome = yield* dispatchSweepForProject(projectId, nowMs, {
+        ignoreQuietWindow: true,
+      });
+      yield* recordOutcome(projectId, nowMs, outcome);
+      return outcome;
+    });
+
   /** One tick: fire any due schedules. */
   const tick = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
@@ -109,105 +230,10 @@ const make = Effect.gen(function* () {
       const intervalMs = schedule.intervalMinutes * 60_000;
       const lastFired = schedule.lastFiredAtMs ?? schedule.startedAtMs;
       if (lastFired + intervalMs > nowMs) continue;
-
-      // ----- pick the candidate thread ------------------------------------
-      const shellResult = yield* snapshot
-        .getShellSnapshot()
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (!shellResult) continue;
-      const shell = shellResult as unknown as {
-        threads: ReadonlyArray<{
-          readonly id: string;
-          readonly projectId?: string;
-          readonly updatedAt?: string | number;
-        }>;
-      };
-      const sortedThreads = shell.threads
-        .filter((t) => t.projectId === schedule.projectId)
-        .sort((a, b) => {
-          const av = typeof a.updatedAt === "number" ? a.updatedAt : Date.parse(String(a.updatedAt));
-          const bv = typeof b.updatedAt === "number" ? b.updatedAt : Date.parse(String(b.updatedAt));
-          return (bv || 0) - (av || 0);
-        });
-      const candidate = sortedThreads[0];
-
-      let outcome: WikiSchedule["lastOutcome"] = null;
-
-      if (!candidate) {
-        outcome = { kind: "skipped", reason: "No threads in this project yet" };
-      } else {
-        // ----- idempotency: skip hot threads ----------------------------
-        const candidateUpdatedMs =
-          typeof candidate.updatedAt === "number"
-            ? candidate.updatedAt
-            : Date.parse(String(candidate.updatedAt));
-        const isHot =
-          Number.isFinite(candidateUpdatedMs) &&
-          candidateUpdatedMs > nowMs - QUIET_THRESHOLD_MS;
-
-        if (isHot) {
-          outcome = {
-            kind: "skipped",
-            reason: `Thread is active (touched ${Math.round((nowMs - candidateUpdatedMs) / 1000)}s ago)`,
-          };
-        } else {
-          // ----- dispatch the wiki-review prompt ------------------------
-          const commandId = CommandId.make(`wiki-sweep:${schedule.projectId}:${nowMs}`);
-          const messageId = MessageId.make(`wiki-sweep-${schedule.projectId}-${nowMs}`);
-          const createdAt = yield* nowIso.pipe(Effect.map(IsoDateTime.make));
-          outcome = yield* orchestrationEngine
-            .dispatch({
-              type: "thread.turn.start",
-              commandId,
-              threadId: ThreadId.make(candidate.id),
-              message: {
-                messageId,
-                role: "user",
-                text: WIKI_REVIEW_PROMPT,
-                attachments: [],
-              },
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              createdAt,
-            })
-            .pipe(
-              Effect.match({
-                onSuccess: (): NonNullable<WikiSchedule["lastOutcome"]> => ({
-                  kind: "success",
-                  capturedMessages: 1,
-                }),
-                onFailure: (err): NonNullable<WikiSchedule["lastOutcome"]> => ({
-                  kind: "failed",
-                  error:
-                    err instanceof Error
-                      ? err.message
-                      : typeof err === "object" && err !== null && "message" in err
-                        ? String((err as { message: unknown }).message)
-                        : "Unknown dispatch error",
-                }),
-              }),
-            );
-        }
-      }
-
-      // Only advance `lastFiredAtMs` on actual dispatches. Skipping a
-      // hot thread used to stamp the timestamp, which deferred the next
-      // fire by another full interval and starved continuously-active
-      // projects entirely. Now we still record the skip in `lastOutcome`
-      // (so the Settings panel shows we tried), but the next check on
-      // the next tick will fire again as soon as the thread cools — or
-      // continue ticking forward without drift.
-      const advanceTimestamp =
-        outcome?.kind === "success" || outcome?.kind === "failed";
-      yield* Ref.update(schedules, (map) => {
-        const copy = new Map(map);
-        copy.set(schedule.projectId, {
-          ...schedule,
-          lastFiredAtMs: advanceTimestamp ? nowMs : schedule.lastFiredAtMs,
-          lastOutcome: outcome,
-        });
-        return copy;
+      const outcome = yield* dispatchSweepForProject(schedule.projectId, nowMs, {
+        ignoreQuietWindow: false,
       });
+      yield* recordOutcome(schedule.projectId, nowMs, outcome);
     }
   });
 
@@ -227,7 +253,7 @@ const make = Effect.gen(function* () {
       });
     });
 
-  return { list, upsert, remove, start } satisfies WikiSchedulerShape;
+  return { list, upsert, remove, runOnce, start } satisfies WikiSchedulerShape;
 });
 
 export const WikiSchedulerLive = Layer.effect(WikiScheduler, make);

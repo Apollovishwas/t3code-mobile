@@ -38,6 +38,17 @@ export interface WikiSchedulerShape {
   /** Forget a project's schedule entirely. */
   readonly remove: (projectId: ProjectId) => Effect.Effect<void>;
 
+  /**
+   * Fire a sweep for one project right now, on demand — the "Sync now"
+   * button. Bypasses both the interval clock and the hot-thread quiet
+   * window (the user explicitly asked for it). Does NOT require a
+   * schedule to exist for the project. Returns the outcome so the UI
+   * can show "captured" / "no thread" / "failed" inline.
+   */
+  readonly runOnce: (
+    projectId: ProjectId,
+  ) => Effect.Effect<NonNullable<WikiSchedule["lastOutcome"]>>;
+
   /** Start the background tick fiber. Call once at server startup. */
   readonly start: () => Effect.Effect<void, never, import("effect/Scope").Scope>;
 }

@@ -65,13 +65,18 @@ export function WikiSettingsPanel() {
     onSuccess: invalidate,
   });
 
-  const gardenMutation = useMutation({
+  // "Sync now" — fire a one-time sweep for this project immediately,
+  // bypassing the schedule clock + hot-thread guard. (Replaces the old
+  // "Garden now" button, which hit a no-op endpoint after the DIY
+  // rewrite.)
+  const syncMutation = useMutation({
     mutationFn: (projectId: string) =>
-      fetchJson("/api/wiki/garden", {
+      fetchJson("/api/wiki/sweep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId }),
       }),
+    onSuccess: invalidate,
   });
 
   const scheduleMap = new Map((schedulesQuery.data?.schedules ?? []).map((s) => [s.projectId, s]));
@@ -113,8 +118,8 @@ export function WikiSettingsPanel() {
                     upsertMutation.mutate({ projectId: project.id, ...input })
                   }
                   onRemove={() => deleteMutation.mutate(project.id)}
-                  onGarden={() => gardenMutation.mutate(project.id)}
-                  gardenBusy={gardenMutation.isPending}
+                  onSync={() => syncMutation.mutate(project.id)}
+                  syncBusy={syncMutation.isPending}
                 />
               </li>
             );
@@ -132,8 +137,8 @@ function ProjectScheduleRow({
   busy,
   onUpsert,
   onRemove,
-  onGarden,
-  gardenBusy,
+  onSync,
+  syncBusy,
 }: {
   readonly projectId: string;
   readonly projectName: string;
@@ -141,8 +146,8 @@ function ProjectScheduleRow({
   readonly busy: boolean;
   readonly onUpsert: (input: { enabled: boolean; intervalMinutes: number }) => void;
   readonly onRemove: () => void;
-  readonly onGarden: () => void;
-  readonly gardenBusy: boolean;
+  readonly onSync: () => void;
+  readonly syncBusy: boolean;
 }) {
   const [intervalMinutes, setIntervalMinutes] = useState<number>(
     schedule?.intervalMinutes ?? 360,
@@ -187,12 +192,13 @@ function ProjectScheduleRow({
         <div className="ml-auto flex gap-1">
           <button
             type="button"
-            onClick={onGarden}
-            disabled={gardenBusy}
+            onClick={onSync}
+            disabled={syncBusy}
+            title="Run a one-time wiki sweep on this project's latest thread now"
             className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
           >
             <PlayIcon className="size-3" />
-            {gardenBusy ? "Gardening…" : "Garden now"}
+            {syncBusy ? "Syncing…" : "Sync now"}
           </button>
           {schedule ? (
             <button

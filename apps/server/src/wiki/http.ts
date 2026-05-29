@@ -321,6 +321,31 @@ export const wikiDetectRouteLayer = HttpRouter.add(
 );
 
 // ---------------------------------------------------------------------------
+// POST /api/wiki/sweep { projectId } — fire a one-time sweep right now.
+// Bypasses the interval clock and the hot-thread quiet window. Works
+// whether or not a schedule exists for the project. This is the "Sync
+// now" button.
+// ---------------------------------------------------------------------------
+
+const SweepBody = Schema.Struct({ projectId: Schema.String });
+
+export const wikiSweepRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/wiki/sweep",
+  Effect.gen(function* () {
+    const input = yield* HttpServerRequest.schemaBodyJson(SweepBody).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WikiHttpError({ status: 400, message: `Invalid body: ${String(cause)}` }),
+      ),
+    );
+    const scheduler = yield* WikiScheduler;
+    const outcome = yield* scheduler.runOnce(input.projectId as ProjectId);
+    return HttpServerResponse.jsonUnsafe({ outcome }, { status: 200 });
+  }).pipe(Effect.catchTag("WikiHttpError", respondToError)),
+);
+
+// ---------------------------------------------------------------------------
 // GET /api/wiki/schedules — list all in-memory schedules.
 // ---------------------------------------------------------------------------
 

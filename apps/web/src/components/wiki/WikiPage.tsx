@@ -8,6 +8,7 @@ import {
   PlayIcon,
   RefreshCwIcon,
   SearchIcon,
+  SparklesIcon,
   TerminalIcon,
 } from "lucide-react";
 import type {
@@ -145,6 +146,44 @@ export function WikiPage({ projects }: WikiPageProps) {
     ? searchQuery.data?.hits ?? []
     : pagesQuery.data?.pages ?? [];
 
+  // "Sync now" — fire a one-time sweep for the current project. Bypasses
+  // the schedule clock + hot-thread guard server-side. The sweep runs as
+  // a normal turn in the project's most-recent thread; on success we nudge
+  // the user to that thread (the agent is now working there). We refetch
+  // status/pages after a short delay so freshly-written pages show up.
+  const headerQueryClient = useQueryClient();
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      if (!effectiveProjectId) throw new Error("No project selected");
+      const response = await fetch("/api/wiki/sweep", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: effectiveProjectId }),
+      });
+      const body = (await response.json()) as
+        | {
+            outcome:
+              | { kind: "success"; capturedMessages: number }
+              | { kind: "skipped"; reason: string }
+              | { kind: "failed"; error: string };
+          }
+        | { error: string };
+      if (!response.ok) {
+        throw new Error("error" in body ? body.error : `HTTP ${response.status}`);
+      }
+      return (body as { outcome: { kind: string; reason?: string; error?: string } }).outcome;
+    },
+    onSuccess: () => {
+      // Re-read after the agent has had a moment to write.
+      window.setTimeout(() => {
+        void headerQueryClient.invalidateQueries({ queryKey: ["wiki", "status", effectiveProjectId] });
+        void headerQueryClient.invalidateQueries({ queryKey: ["wiki", "list", effectiveProjectId] });
+        void headerQueryClient.invalidateQueries({ queryKey: ["wiki", "topics", effectiveProjectId] });
+      }, 1500);
+    },
+  });
+
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-x-hidden bg-background">
       <header className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-4 sm:py-3">
@@ -177,6 +216,23 @@ export function WikiPage({ projects }: WikiPageProps) {
               ))}
             </select>
           ) : null}
+          {ready ? (
+            <button
+              type="button"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending || effectiveProjectId === null}
+              aria-label="Sync wiki now"
+              title="Run a one-time wiki sweep on this project's latest thread"
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+            >
+              <SparklesIcon
+                className={`size-3.5 ${syncMutation.isPending ? "animate-pulse" : ""}`}
+              />
+              <span className="hidden sm:inline">
+                {syncMutation.isPending ? "Syncing…" : "Sync now"}
+              </span>
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => {
@@ -192,6 +248,26 @@ export function WikiPage({ projects }: WikiPageProps) {
           </button>
         </div>
       </header>
+
+      {syncMutation.isSuccess || syncMutation.isError ? (
+        <div
+          className={`border-b px-3 py-1.5 text-xs ${
+            syncMutation.isError
+              ? "border-red-500/30 bg-red-500/10 text-red-700"
+              : syncMutation.data?.kind === "success"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-700"
+          }`}
+        >
+          {syncMutation.isError
+            ? `Sync failed: ${(syncMutation.error as Error).message}`
+            : syncMutation.data?.kind === "success"
+              ? "Sync dispatched — the agent is reviewing the latest thread and updating pages. Refresh in a moment."
+              : syncMutation.data?.kind === "skipped"
+                ? `Sync skipped: ${syncMutation.data.reason}`
+                : `Sync failed: ${syncMutation.data?.error ?? "unknown"}`}
+        </div>
+      ) : null}
 
       {effectiveProjectId === null ? (
         <EmptyState message="No projects yet — add one to start a wiki." />
