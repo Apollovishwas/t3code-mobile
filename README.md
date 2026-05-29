@@ -18,12 +18,52 @@ You'll be hacking on the code; this is the dev path. If you just want to *use* T
 ### Prerequisites
 
 - **Node ≥ 22.16** (uses built-in `node:sqlite`)
-- **Bun ≥ 1.3** (used by the workspace tooling for `bun install`; runtime uses Node)
+- **Bun ≥ 1.3** — required, but only for installing deps and running build scripts. The actual T3 server runs on Node. Install once with:
+  ```bash
+  curl -fsSL https://bun.sh/install | bash    # macOS / Linux
+  # or:
+  npm install -g bun                          # any machine with npm
+  # or on Windows:
+  powershell -c "irm bun.sh/install.ps1 | iex"
+  ```
+  Then `exec $SHELL` (or open a new terminal) and verify with `bun --version`.
+
+  > **Why Bun and not npm?** The workspace uses Bun's `catalog:` protocol in 5+ package.json files to pin shared versions in one place. `npm install` fails with `Unsupported URL Type 'catalog:'` because npm doesn't speak that protocol yet.
 - **One coding-agent CLI** authenticated on this host:
   - Claude Code — `npm i -g @anthropic-ai/claude-code` then `claude` (use `/login`)
   - or Codex — install [Codex CLI](https://developers.openai.com/codex/cli) and `codex login`
   - or OpenCode — install [OpenCode](https://opencode.ai) and `opencode auth login`
 - macOS or Linux. Windows works for the server but I don't dogfood it.
+
+### Copy-paste setup (zero to running)
+
+```bash
+# 1. Install Bun if you don't have it
+curl -fsSL https://bun.sh/install | bash && exec $SHELL
+
+# 2. Clone + install deps
+git clone https://github.com/Apollovishwas/t3code-mobile.git
+cd t3code-mobile
+bun install
+
+# 3. Make sure at least one agent CLI is logged in (browser opens once)
+npm i -g @anthropic-ai/claude-code
+claude   # type /login, then Ctrl+C once you see "Logged in as …"
+
+# 4. Build
+bun run --filter @t3tools/web build
+bun run --filter @t3tools/server build
+
+# 5. Start the server (leave this terminal running)
+node apps/server/dist/bin.mjs start \
+  --base-dir ~/.t3 --port 3773 --host 127.0.0.1 --no-browser
+# Watch for the "Open http://localhost:3773/pair#token=…" line; hit it once.
+
+# 6. (second terminal) Get reachable from your phone
+node apps/server/dist/bin.mjs setup-mobile
+```
+
+That's everything end-to-end. The rest of this section breaks down each step in case you need to deviate.
 
 ### Clone + install
 
