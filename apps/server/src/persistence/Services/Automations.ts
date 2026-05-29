@@ -148,6 +148,15 @@ export interface AutomationRepositoryShape {
   readonly listRecentRuns: (
     input: ListRecentRunsInput,
   ) => Effect.Effect<ReadonlyArray<AutomationRun>, AutomationRepositoryError>;
+  /**
+   * Delete `automation_runs` rows older than the given ms-cutoff.
+   * Called periodically by the scheduler so a high-frequency
+   * automation doesn't grow the table unbounded. Returns the number
+   * of rows deleted so we can log loud-enough when we're catching up.
+   */
+  readonly pruneRunsOlderThan: (input: {
+    readonly olderThanMs: number;
+  }) => Effect.Effect<number, AutomationRepositoryError>;
 }
 
 export class AutomationRepository extends Context.Service<

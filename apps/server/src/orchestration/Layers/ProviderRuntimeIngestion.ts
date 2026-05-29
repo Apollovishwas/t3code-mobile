@@ -25,6 +25,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { superviseReactor } from "../reactorSupervision.ts";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -1648,17 +1649,23 @@ const make = Effect.gen(function* () {
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* Effect.forkScoped(
-        Stream.runForEach(providerService.streamEvents, (event) =>
-          worker.enqueue({ source: "runtime", event }),
+        superviseReactor(
+          "provider.runtime.ingestion.runtime-events",
+          Stream.runForEach(providerService.streamEvents, (event) =>
+            worker.enqueue({ source: "runtime", event }),
+          ),
         ),
       );
       yield* Effect.forkScoped(
-        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-          if (event.type !== "thread.turn-start-requested") {
-            return Effect.void;
-          }
-          return worker.enqueue({ source: "domain", event });
-        }),
+        superviseReactor(
+          "provider.runtime.ingestion.domain-events",
+          Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+            if (event.type !== "thread.turn-start-requested") {
+              return Effect.void;
+            }
+            return worker.enqueue({ source: "domain", event });
+          }),
+        ),
       );
     });
 

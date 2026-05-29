@@ -14,7 +14,7 @@ export class WikiNotInitializedError extends Schema.TaggedErrorClass<WikiNotInit
   },
 ) {
   override get message(): string {
-    return `No .almanac/index.db under ${this.workspaceRoot}; run \`almanac init\` in the project root.`;
+    return `No .t3/wiki/ under ${this.workspaceRoot}; tap "Initialise wiki here" in /wiki, or ask Claude to create the first page.`;
   }
 }
 

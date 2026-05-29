@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { superviseReactor } from "../../orchestration/reactorSupervision.ts";
 import { PushNotifications } from "../Services/PushNotifications.ts";
 import {
   PushNotificationReactor,
@@ -74,10 +75,44 @@ const make = Effect.gen(function* () {
   // — fires once per turn on the first plan.updated event with pending work.
   const announcedPlanReady = new Set<string>();
 
+  // Hard cap to bound growth even if we miss an eviction event. Old
+  // entries are dropped FIFO via insertion-order Map iteration. A turn
+  // has at most ~30 steps so this gives us ~136 turns of slack at the
+  // upper bound — plenty for any "in-flight" workload and trivially
+  // small compared to the leak this replaces.
+  const DEDUPE_HARD_CAP = 4096;
+  const evictOldest = <T>(map: Map<string, T> | Set<string>) => {
+    if (map.size <= DEDUPE_HARD_CAP) return;
+    const overshoot = map.size - DEDUPE_HARD_CAP;
+    let i = 0;
+    for (const key of map.keys()) {
+      if (i++ >= overshoot) break;
+      (map as Map<string, T>).delete(key);
+    }
+  };
+  // Drop per-turn dedupe state once the turn completes — that's the
+  // moment the keys can no longer fire again, so retaining them is
+  // pure leak. We still cap defensively above for the case where a
+  // turn never reaches `turn-diff-completed` (crash, timeout, etc.).
+  const evictDedupeForTurn = (dedupeKey: string) => {
+    notifiedSteps.delete(dedupeKey);
+    announcedPlanReady.delete(dedupeKey);
+  };
+
   const start: PushNotificationReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      superviseReactor(
+        "push.notification.reactor",
+        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (event.type === "thread.turn-diff-completed") {
+          // The turn is over — drop dedupe state for it so the per-turn
+          // notification Sets/Maps don't grow forever over week-long
+          // server uptime. Reads on this dedupeKey from later events
+          // for the same turn would be impossible by construction
+          // (turns only complete once); deletion is safe.
+          const threadId = event.payload.threadId;
+          const turnId = event.payload.turnId ?? "no-turn";
+          evictDedupeForTurn(`${threadId}:${turnId}`);
           return push
             .broadcast({
               title: "Agent finished",
@@ -86,6 +121,18 @@ const make = Effect.gen(function* () {
               url: "/",
             })
             .pipe(Effect.catch(() => Effect.void));
+        }
+        if (event.type === "thread.deleted") {
+          // Any per-(thread,turn) dedupe rows for this thread are
+          // unreachable now. Find them via prefix match and drop.
+          const prefix = `${event.payload.threadId}:`;
+          for (const key of notifiedSteps.keys()) {
+            if (key.startsWith(prefix)) notifiedSteps.delete(key);
+          }
+          for (const key of announcedPlanReady) {
+            if (key.startsWith(prefix)) announcedPlanReady.delete(key);
+          }
+          return Effect.void;
         }
 
         // Granular categories: needs-input on approval / question, plan-ready
@@ -144,7 +191,7 @@ const make = Effect.gen(function* () {
             // First time we see a plan for this turn (with pending work) —
             // push "Plan ready" once so the user can hop in for approval.
             if (
-              !announcedPlanReady.has(dedupeKey) &&
+              (evictOldest(announcedPlanReady), !announcedPlanReady.has(dedupeKey)) &&
               planHasPendingSteps(activity.payload)
             ) {
               announcedPlanReady.add(dedupeKey);
@@ -166,6 +213,7 @@ const make = Effect.gen(function* () {
             // Per-task: announce each newly-completed plan step exactly once.
             const completed = completedPlanSteps(activity.payload);
             if (completed.length > 0) {
+              evictOldest(notifiedSteps);
               let seen = notifiedSteps.get(dedupeKey);
               if (!seen) {
                 seen = new Set();
@@ -195,7 +243,8 @@ const make = Effect.gen(function* () {
         }
 
         return Effect.void;
-      }),
+        }),
+      ),
     );
   });
 

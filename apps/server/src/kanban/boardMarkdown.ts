@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { KanbanRepository } from "../persistence/Services/KanbanBoard.ts";
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 
 /** Trivial unix path join — workspaceRoot is always an absolute path. */
 function joinPath(base: string, ...rest: ReadonlyArray<string>): string {
@@ -53,7 +54,11 @@ export const writeBoardMarkdownForProject = (projectId: ProjectId) =>
     const targetDir = joinPath(workspaceRoot, ".t3");
     const targetPath = joinPath(targetDir, "board.md");
     yield* fs.makeDirectory(targetDir, { recursive: true });
-    yield* fs.writeFileString(targetPath, markdown);
+    // Atomic write so concurrent board mutations (Claude moves card A
+    // while user-driven action moves card B) can't truncate the file
+    // or interleave bytes. `writeFileStringAtomically` uses a same-dir
+    // temp file + rename.
+    yield* writeFileStringAtomically({ filePath: targetPath, contents: markdown });
   }).pipe(Effect.ignoreCause({ log: true }));
 
 const COLUMNS_IN_ORDER: ReadonlyArray<KanbanColumn> = [

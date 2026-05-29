@@ -6,35 +6,52 @@ import { notificationPermission, showAgentNotification } from "../notifications"
 
 type StoreState = ReturnType<typeof useStore.getState>;
 
-/** Thread ids that currently have a streaming assistant message. */
-function streamingThreadIds(state: StoreState): Set<string> {
-  const ids = new Set<string>();
+interface StreamingThreadEntry {
+  readonly threadId: string;
+  readonly environmentId: string;
+}
+
+/** Thread ids that currently have a streaming assistant message,
+ *  paired with the environment they belong to so we can build the
+ *  correct deep-link URL when they finish. */
+function streamingThreads(state: StoreState): Map<string, StreamingThreadEntry> {
+  const entries = new Map<string, StreamingThreadEntry>();
   const environments = state.environmentStateById ?? {};
-  for (const environment of Object.values(environments)) {
+  for (const [environmentId, environment] of Object.entries(environments)) {
     const messagesByThread = environment?.messageByThreadId ?? {};
     for (const [threadId, messages] of Object.entries(messagesByThread)) {
       for (const message of Object.values(messages ?? {})) {
         if (message?.role === "assistant" && message.streaming) {
-          ids.add(threadId);
+          entries.set(threadId, { threadId, environmentId });
           break;
         }
       }
     }
   }
-  return ids;
+  return entries;
+}
+
+function threadDeepLink(entry: StreamingThreadEntry): string {
+  return `/${encodeURIComponent(entry.environmentId)}/${encodeURIComponent(entry.threadId)}`;
 }
 
 /**
  * Fires a browser notification when an agent turn finishes while the tab is
  * backgrounded. Mounted once inside the authenticated app shell; renders
- * nothing. A thread "finishes" when it had a streaming assistant message and no
- * longer does. Gated on the per-device "Agent notifications" setting, which is
- * also where the OS permission is requested (General settings).
+ * nothing.
+ *
+ * Each finished thread carries its own deep-link URL (`/env/thread`) so
+ * tapping the notification takes you to *that* thread, not the page you
+ * happened to be looking at when it fired. The SW message bridge in
+ * main.tsx routes the URL through TanStack Router. With 2+ agents
+ * running the previously-current behaviour took users to the wrong
+ * thread.
+ *
+ * Gated on the per-device "Agent notifications" setting + the OS-level
+ * Notification.permission grant.
  */
 export function AgentCompletionNotifier() {
   const enabled = useSettings((s) => s.agentCompletionNotifications);
-  // Read inside the non-React store subscription via a ref so toggling the
-  // setting takes effect without resubscribing.
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
@@ -43,27 +60,33 @@ export function AgentCompletionNotifier() {
       if (!enabledRef.current || notificationPermission() !== "granted") {
         return;
       }
-      const previous = streamingThreadIds(previousState);
+      const previous = streamingThreads(previousState);
       if (previous.size === 0) {
         return;
       }
-      const current = streamingThreadIds(state);
-      let finishedCount = 0;
-      for (const threadId of previous) {
+      const current = streamingThreads(state);
+      const finished: StreamingThreadEntry[] = [];
+      for (const [threadId, entry] of previous) {
         if (!current.has(threadId)) {
-          finishedCount += 1;
+          finished.push(entry);
         }
       }
-      if (finishedCount === 0 || !document.hidden) {
+      if (finished.length === 0 || !document.hidden) {
         return;
       }
+      // When multiple threads finish in the same store update (rare but
+      // possible), pick the most recent one as the click target — that
+      // matches the visible notification, which is also one entry per
+      // tag. The body distinguishes single vs multi-finish so the user
+      // knows others are also done.
+      const primary = finished[finished.length - 1]!;
       void showAgentNotification("Agent finished", {
         body:
-          finishedCount > 1
-            ? `${finishedCount} agents finished responding in T3 Code.`
+          finished.length > 1
+            ? `${finished.length} agents finished responding in T3 Code.`
             : "Your agent finished responding in T3 Code.",
         tag: "t3code-agent-finished",
-        url: window.location.pathname + window.location.search,
+        url: threadDeepLink(primary),
       });
     });
 

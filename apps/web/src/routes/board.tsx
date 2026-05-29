@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 
 import { BoardPage } from "../components/board/BoardPage";
+import { RouteErrorPanel } from "../components/RouteErrorPanel";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 
 function BoardRoute() {
@@ -17,4 +18,5 @@ function BoardRoute() {
 
 export const Route = createFileRoute("/board")({
   component: BoardRoute,
+  errorComponent: RouteErrorPanel,
 });

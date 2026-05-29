@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import webpush from "web-push";
 
 import { ServerConfig } from "../../config.ts";
+import { writeFileStringAtomically } from "../../atomicWrite.ts";
 import {
   PushNotifications,
   type PushNotificationsShape,
@@ -86,10 +87,21 @@ const make = Effect.gen(function* () {
   const persist = Effect.gen(function* () {
     const map = yield* Ref.get(subscriptionsRef);
     const contents = yield* encodeSubscriptions([...map.values()]);
-    yield* fs
-      .makeDirectory(path.dirname(subscriptionsPath), { recursive: true })
-      .pipe(Effect.ignore);
-    yield* fs.writeFileString(subscriptionsPath, contents);
+    // Atomic write so a concurrent subscribe/unsubscribe + power loss
+    // can't truncate the file and silently lose every subscription on
+    // the next boot. `writeFileStringAtomically` writes to a scoped temp
+    // file in the same directory then renames atomically.
+    //
+    // Re-provide the FileSystem / Path services captured at layer build
+    // time so the persist Effect remains `R = never` and doesn't bubble
+    // those requirements out into the public PushNotificationsShape.
+    yield* writeFileStringAtomically({
+      filePath: subscriptionsPath,
+      contents,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
   }).pipe(Effect.catch((cause) => Effect.logWarning("failed to persist subscriptions", { cause })));
 
   yield* Effect.logInfo("push notifications ready", {

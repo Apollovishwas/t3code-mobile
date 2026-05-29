@@ -618,8 +618,11 @@ const CLAUDE_SETTING_SOURCES = [
  * The agent must use those — it must NEVER ask the user for an id.
  * PWA users have no URL bar, so they cannot copy/paste ids in.
  */
-function buildBoardSystemPromptAppend(): string {
-  const base = "http://127.0.0.1:3773";
+function buildBoardSystemPromptAppend(serverPort: number): string {
+  // Always use 127.0.0.1: the agent runs on the same machine as the
+  // server, even when the user reaches T3 via Tailscale. Port comes
+  // from ServerConfig so non-default --port flags work.
+  const base = `http://127.0.0.1:${serverPort}`;
   return [
     "",
     "## T3 Code Kanban Board",
@@ -3262,7 +3265,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           //      + counts per column + In Progress titles) so the agent
           //      can answer "what's on my board" without a curl call.
           append:
-            buildBoardSystemPromptAppend() +
+            buildBoardSystemPromptAppend(serverConfig.port) +
             boardContextAppend +
             buildWikiSystemPromptAppend(),
         },

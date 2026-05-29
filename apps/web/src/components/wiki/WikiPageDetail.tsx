@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileIcon, LinkIcon } from "lucide-react";
 import type { ProjectId, WikiPage } from "@t3tools/contracts";
 
+import ChatMarkdown from "../ChatMarkdown";
+
 interface PageDetailResponse {
   readonly page: WikiPage;
 }
@@ -79,15 +81,14 @@ export function WikiPageDetail({
               ) : null}
             </div>
 
-            <div
-              className="prose prose-sm prose-neutral max-w-none dark:prose-invert"
-              // Almanac pages are user-trusted: their content was produced
-              // by the agent + reviewed via git in the project repo.
-              // Render as plain pre + line-break preserved for v1; switch
-              // to a markdown renderer in slice 6 if needed.
-              style={{ whiteSpace: "pre-wrap" }}
-            >
-              {query.data.page.body}
+            <div className="prose prose-sm prose-neutral max-w-none dark:prose-invert">
+              {/*
+               * Wiki pages are user-trusted: their content was produced by
+               * the agent + reviewed via git in the project repo. Render
+               * through the same markdown pipeline chat uses so headings,
+               * code blocks, and links work the way the user expects.
+               */}
+              <ChatMarkdown text={query.data.page.body} cwd={undefined} />
             </div>
 
             {query.data.page.backlinks.length > 0 ? (

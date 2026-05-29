@@ -119,6 +119,10 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useSettings } from "../../hooks/useSettings";
+import {
+  getWsConnectionUiState,
+  useWsConnectionStatus,
+} from "../../rpc/wsConnectionState";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -1188,8 +1192,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null,
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
+  // WS-aware "is the underlying socket actually usable right now?"
+  // gate. Without this, on a flaky cell signal the user could tap Send
+  // and the request would queue silently in the transport, leaving the
+  // composer empty but the agent never seeing the message. Now Send is
+  // disabled the moment the socket isn't in the `connected` ui-state.
+  const wsConnectionStatus = useWsConnectionStatus();
+  const wsConnectionUiState = getWsConnectionUiState(wsConnectionStatus);
+  const isWsOffline = wsConnectionUiState !== "connected";
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    isWsOffline ||
+    !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;

@@ -83,17 +83,12 @@ export function WikiSettingsPanel() {
         <h1 className="text-lg font-semibold">Wiki</h1>
       </div>
       <p className="mb-6 max-w-2xl text-sm text-muted-foreground">
-        T3 reads each project's <code className="rounded-sm bg-muted px-1">.almanac/</code>{" "}
-        wiki — a living docs cache maintained by{" "}
-        <a
-          href="https://github.com/AlmanacCode/codealmanac"
-          className="text-primary underline"
-          target="_blank"
-          rel="noreferrer"
-        >
-          codealmanac
-        </a>
-        . Enable a sweep per-project to have T3 ingest the most-recent thread on a schedule.
+        T3 stores each project's wiki as markdown files under{" "}
+        <code className="rounded-sm bg-muted px-1">.t3/wiki/</code> in the project root.
+        Pages are maintained by the same Claude Code session you're chatting with
+        — no API key, no external CLI, no separate billing. Enable a sweep
+        per-project to fire a wiki-review prompt into the most-recently-touched
+        thread on a schedule.
         <br />
         <span className="text-amber-700">v1 limit: schedules reset on server restart.</span>
       </p>

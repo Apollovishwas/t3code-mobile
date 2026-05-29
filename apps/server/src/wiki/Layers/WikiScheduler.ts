@@ -190,11 +190,20 @@ const make = Effect.gen(function* () {
         }
       }
 
+      // Only advance `lastFiredAtMs` on actual dispatches. Skipping a
+      // hot thread used to stamp the timestamp, which deferred the next
+      // fire by another full interval and starved continuously-active
+      // projects entirely. Now we still record the skip in `lastOutcome`
+      // (so the Settings panel shows we tried), but the next check on
+      // the next tick will fire again as soon as the thread cools — or
+      // continue ticking forward without drift.
+      const advanceTimestamp =
+        outcome?.kind === "success" || outcome?.kind === "failed";
       yield* Ref.update(schedules, (map) => {
         const copy = new Map(map);
         copy.set(schedule.projectId, {
           ...schedule,
-          lastFiredAtMs: nowMs,
+          lastFiredAtMs: advanceTimestamp ? nowMs : schedule.lastFiredAtMs,
           lastOutcome: outcome,
         });
         return copy;

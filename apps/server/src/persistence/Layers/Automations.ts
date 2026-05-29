@@ -277,6 +277,21 @@ const make = Effect.gen(function* () {
       `,
   });
 
+  // Prune old run-history rows. SQLite is fine doing this in-place; we
+  // don't VACUUM because the file size doesn't grow back from the freed
+  // pages until the user explicitly vacuums.
+  const pruneRunsImpl = (input: { readonly olderThanMs: number }) =>
+    Effect.gen(function* () {
+      const result = yield* sql`
+        DELETE FROM automation_runs WHERE ran_at_ms < ${input.olderThanMs}
+      `.pipe(Effect.mapError(toPersistenceSqlError("AutomationRepository.pruneRuns")));
+      // The Effect SQL client returns the affected-row count on the
+      // first array element of write results in some adapters; default
+      // safely to 0 if absent.
+      const changes = (result as unknown as { changes?: number }).changes;
+      return typeof changes === "number" ? changes : 0;
+    });
+
   // Update is split into one tagged-template UPDATE per field that's
   // actually being changed. Keeps each statement static (no `sql.unsafe`)
   // at the cost of a few extra round trips on multi-field patches —
@@ -430,6 +445,9 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map(rowToRun)),
     );
 
+  const pruneRunsOlderThan: AutomationRepositoryShape["pruneRunsOlderThan"] = (input) =>
+    pruneRunsImpl(input);
+
   return {
     listByProject,
     listAll,
@@ -442,6 +460,7 @@ const make = Effect.gen(function* () {
     markFailed,
     appendRun,
     listRecentRuns,
+    pruneRunsOlderThan,
   } satisfies AutomationRepositoryShape;
 });
 

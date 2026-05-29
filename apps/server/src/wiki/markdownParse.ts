@@ -36,17 +36,19 @@ interface FrontmatterValue {
   readonly list: ReadonlyArray<string> | null;
 }
 
-/** Split `---\n…\n---\n<body>` into raw frontmatter text + body. */
+/** Split `---\n…\n---\n<body>` into raw frontmatter text + body.
+ *  Accepts a closing `---` followed by either a newline or EOF — Claude's
+ *  Write tool occasionally omits the trailing newline. */
 function splitFrontmatter(content: string): { fm: string; body: string } {
   // Accept BOM + CRLF.
   const normalized = content.replace(/^﻿/, "");
   if (!normalized.startsWith("---")) return { fm: "", body: normalized };
   const after = normalized.slice(3);
-  const endIdx = after.search(/\r?\n---\r?\n/);
+  const endIdx = after.search(/\r?\n---(?:\r?\n|$)/);
   if (endIdx === -1) return { fm: "", body: normalized };
   const fm = after.slice(after.indexOf("\n") + 1, endIdx);
   const bodyStart = endIdx + after.slice(endIdx).indexOf("\n---") + "\n---".length;
-  let body = after.slice(bodyStart).replace(/^\r?\n/, "");
+  const body = after.slice(bodyStart).replace(/^\r?\n/, "");
   return { fm, body };
 }
 

@@ -176,9 +176,6 @@ export function ResumeClaudeSessionDialog({
           <DialogTitle className="flex items-center gap-2">
             <HistoryIcon className="size-4" aria-hidden />
             Resume a Claude session
-            <span className="ml-1 rounded bg-success/15 px-1.5 py-0.5 font-mono text-[10px] text-success-foreground">
-              build R10
-            </span>
           </DialogTitle>
           <DialogDescription>
             {step === "folders"

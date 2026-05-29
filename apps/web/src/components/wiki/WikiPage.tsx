@@ -20,13 +20,17 @@ import type {
 import { cn } from "~/lib/utils";
 
 /**
- * Read-only Wiki page — browse a project's Almanac wiki on mobile or
- * desktop. Writes happen through the agent (capture/garden), not here.
+ * Read-only Wiki page — browse the project's wiki on mobile or desktop.
+ * Pages are markdown files under `.t3/wiki/`, maintained by the same
+ * Claude Code session the user is chatting with (no API key, no
+ * subprocess, billed through the user's existing subscription).
  *
  * Three states surface on first paint:
- *   - "not-initialized": no .almanac/ → InstallPanel + run-init hint
- *   - "unsupported-schema": .almanac/ present but wrong version → upgrade hint
- *   - "ready": browse + search + topic-tree
+ *   - "not-initialized": no `.t3/wiki/` → InstallPanel (single Init button)
+ *   - "unsupported-schema": legacy state from the SQLite era; the new
+ *     filesystem reader never emits this, but the contract is shared
+ *     with old clients so we render it gracefully.
+ *   - "ready": browse + search + topic list
  */
 
 const STORAGE_KEY = "t3.wiki.lastProjectId";

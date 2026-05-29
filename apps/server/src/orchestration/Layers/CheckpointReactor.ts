@@ -23,6 +23,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { superviseReactor } from "../reactorSupervision.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -808,26 +809,32 @@ const make = Effect.gen(function* () {
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (
-          event.type !== "thread.turn-start-requested" &&
-          event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested" &&
-          event.type !== "thread.turn-diff-completed"
-        ) {
-          return Effect.void;
-        }
-        return worker.enqueue({ source: "domain", event });
-      }),
+      superviseReactor(
+        "checkpoint.reactor.domain-events",
+        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+          if (
+            event.type !== "thread.turn-start-requested" &&
+            event.type !== "thread.message-sent" &&
+            event.type !== "thread.checkpoint-revert-requested" &&
+            event.type !== "thread.turn-diff-completed"
+          ) {
+            return Effect.void;
+          }
+          return worker.enqueue({ source: "domain", event });
+        }),
+      ),
     );
 
     yield* Effect.forkScoped(
-      Stream.runForEach(providerService.streamEvents, (event) => {
-        if (event.type !== "turn.started" && event.type !== "turn.completed") {
-          return Effect.void;
-        }
-        return worker.enqueue({ source: "runtime", event });
-      }),
+      superviseReactor(
+        "checkpoint.reactor.runtime-events",
+        Stream.runForEach(providerService.streamEvents, (event) => {
+          if (event.type !== "turn.started" && event.type !== "turn.completed") {
+            return Effect.void;
+          }
+          return worker.enqueue({ source: "runtime", event });
+        }),
+      ),
     );
   });
 

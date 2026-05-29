@@ -19,6 +19,7 @@ import type {
   KanbanNote,
 } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
 import { selectProjectsAcrossEnvironments, useStore } from "~/store";
 
 /**
@@ -621,9 +622,9 @@ async function apiDelete(path: string): Promise<unknown> {
   return await response.json();
 }
 
-// The card/notes/artifacts reads still go through the existing RPC; we
-// just import them lazily here so the file's data path stays single-API.
-import { readLocalApi } from "~/localApi";
+// The card/notes/artifacts reads still go through the existing RPC.
+// (Previously this had a second `import { readLocalApi }` here; consolidated
+// into the top-of-file import.)
 async function fetchCard(id: KanbanCardId) {
   const api = readLocalApi();
   if (!api) throw new Error("Local backend unavailable");

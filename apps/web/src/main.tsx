@@ -41,4 +41,21 @@ if (!isElectron && typeof navigator !== "undefined" && "serviceWorker" in naviga
       console.warn("T3 Code service worker registration failed", error);
     });
   });
+
+  // SW -> page bridge for notification clicks. The notificationclick
+  // handler posts `{type: "t3code:notification-click", url}` to the
+  // focused client; without this listener, the URL was silently dropped
+  // and tapping a push notification appeared to do nothing.
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.type !== "t3code:notification-click") return;
+    const targetUrl = typeof data.url === "string" ? data.url : "/";
+    if (targetUrl === window.location.pathname + window.location.search) return;
+    try {
+      router.navigate({ to: targetUrl as never, replace: false });
+    } catch {
+      // Fall through to a hard navigation if the route isn't typed-known.
+      window.location.assign(targetUrl);
+    }
+  });
 }

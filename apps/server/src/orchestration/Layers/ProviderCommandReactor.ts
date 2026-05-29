@@ -31,6 +31,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { superviseReactor } from "../reactorSupervision.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderCommandReactor,
@@ -1020,7 +1021,10 @@ const make = Effect.gen(function* () {
     });
 
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+      superviseReactor(
+        "provider.command.reactor",
+        Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+      ),
     );
   });
 

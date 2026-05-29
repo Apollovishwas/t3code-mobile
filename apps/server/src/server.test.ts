@@ -720,6 +720,7 @@ const buildAppUnderTest = (options?: {
           markFailed: () => Effect.void,
           appendRun: () => Effect.void,
           listRecentRuns: () => Effect.succeed([]),
+          pruneRunsOlderThan: () => Effect.succeed(0),
         }),
       ),
       Layer.provide(

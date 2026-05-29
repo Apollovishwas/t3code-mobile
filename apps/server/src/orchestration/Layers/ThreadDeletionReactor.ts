@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import { superviseReactor } from "../reactorSupervision.ts";
 import {
   ThreadDeletionReactor,
   type ThreadDeletionReactorShape,
@@ -81,12 +82,15 @@ const make = Effect.gen(function* () {
 
   const start: ThreadDeletionReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (event.type !== "thread.deleted") {
-          return Effect.void;
-        }
-        return worker.enqueue(event);
-      }),
+      superviseReactor(
+        "thread.deletion.reactor",
+        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+          if (event.type !== "thread.deleted") {
+            return Effect.void;
+          }
+          return worker.enqueue(event);
+        }),
+      ),
     );
   });
 

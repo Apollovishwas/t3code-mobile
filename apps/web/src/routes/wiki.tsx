@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 
 import { WikiPage } from "../components/wiki/WikiPage";
+import { RouteErrorPanel } from "../components/RouteErrorPanel";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 
 function WikiRoute() {
@@ -15,4 +16,5 @@ function WikiRoute() {
 
 export const Route = createFileRoute("/wiki")({
   component: WikiRoute,
+  errorComponent: RouteErrorPanel,
 });

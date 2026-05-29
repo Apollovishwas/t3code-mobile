@@ -279,7 +279,9 @@ const make = Effect.gen(function* () {
       }
     });
 
-  /** One sweep — fetch all due automations and dispatch each in series. */
+  /** One sweep — fetch all due automations and dispatch each in series.
+   *  Runs the runs-history janitor at the tail of the sweep so we share
+   *  the same fiber and don't pay for a second forked schedule. */
   const sweep = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     const due = yield* repo.listDue({ now: nowMs }).pipe(
@@ -289,11 +291,34 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
-    if (due.length === 0) return;
-    yield* Effect.logDebug("automation.scheduler.sweep", { dueCount: due.length });
-    for (const automation of due) {
-      const outcome = yield* dispatchAutomation(automation, nowMs);
-      yield* recordOutcome(automation, nowMs, outcome);
+    if (due.length > 0) {
+      yield* Effect.logDebug("automation.scheduler.sweep", { dueCount: due.length });
+      for (const automation of due) {
+        const outcome = yield* dispatchAutomation(automation, nowMs);
+        yield* recordOutcome(automation, nowMs, outcome);
+      }
+    }
+    yield* maybePruneRuns;
+  });
+
+  /**
+   * Periodic janitor for `automation_runs`. The table grew unbounded
+   * before this — a 5-minute-cadence automation inserts ~100k rows/year.
+   * We delete anything older than 30 days. Runs once an hour, sharing
+   * the same sweep fiber so we don't pay for another forked schedule.
+   */
+  const PRUNE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+  const PRUNE_EVERY_MS = 60 * 60 * 1000;
+  let lastPruneAtMs = 0;
+  const maybePruneRuns = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (nowMs - lastPruneAtMs < PRUNE_EVERY_MS) return;
+    lastPruneAtMs = nowMs;
+    const deleted = yield* repo
+      .pruneRunsOlderThan({ olderThanMs: nowMs - PRUNE_RETENTION_MS })
+      .pipe(Effect.catch(() => Effect.succeed(0)));
+    if (deleted > 0) {
+      yield* Effect.logInfo("automation.scheduler.runs-pruned", { deleted });
     }
   });
 
