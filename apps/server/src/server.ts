@@ -114,6 +114,7 @@ import {
   wikiStatusRouteLayer,
   wikiTopicsRouteLayer,
 } from "./wiki/http.ts";
+import { previewProxyRouteLayer, previewDetectRouteLayer } from "./preview/http.ts";
 import {
   kanbanAddNoteRouteLayer,
   kanbanAttachArtifactRouteLayer,
@@ -417,6 +418,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   wikiSchedulesDeleteRouteLayer,
   wikiExportMarkdownRouteLayer,
   wikiSweepRouteLayer,
+  previewProxyRouteLayer,
+  previewDetectRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
   serverEnvironmentRouteLayer,

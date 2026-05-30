@@ -554,7 +554,27 @@ function ChatMarkdown({
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+          const isHttp = !!href && /^https?:\/\//i.test(href);
+          // http(s) links open in the in-app browser pane (with confirmation),
+          // never a real external tab. Non-http hrefs keep default behaviour.
+          return (
+            <a
+              {...props}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => {
+                if (!isHttp || !href) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.confirm(`Open ${href} in the in-app browser?`)) {
+                  window.dispatchEvent(
+                    new CustomEvent("t3:open-browser", { detail: { url: href } }),
+                  );
+                }
+              }}
+            />
+          );
         }
 
         const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);

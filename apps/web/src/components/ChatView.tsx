@@ -148,6 +148,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { BrowserPane } from "./chat/BrowserPane";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -826,6 +827,29 @@ export default function ChatView(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
+  // In-app browser pane state. Local (not URL-driven) — it's a transient
+  // preview surface that doesn't need deep-linking. `browserUrl` null means
+  // "open, awaiting auto-detect or an entered URL".
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserUrl, setBrowserUrl] = useState<string | null>(null);
+  const onToggleBrowser = useCallback(() => {
+    setBrowserOpen((prev) => !prev);
+  }, []);
+  const openBrowserAt = useCallback((url: string) => {
+    setBrowserUrl(url);
+    setBrowserOpen(true);
+  }, []);
+  // Decoupled receiver for "open this URL in the in-app browser" — dispatched
+  // by chat-message link clicks (see ChatMarkdown) so we don't have to thread
+  // a callback through the whole timeline tree.
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const url = (event as CustomEvent<{ url?: string }>).detail?.url;
+      if (typeof url === "string" && url.length > 0) openBrowserAt(url);
+    };
+    window.addEventListener("t3:open-browser", onOpen);
+    return () => window.removeEventListener("t3:open-browser", onOpen);
+  }, [openBrowserAt]);
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -3553,6 +3577,8 @@ export default function ChatView(props: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          browserOpen={browserOpen}
+          onToggleBrowser={onToggleBrowser}
         />
       </header>
 
@@ -3646,6 +3672,15 @@ export default function ChatView(props: ChatViewProps) {
                 </button>
               </div>
             )}
+            {/* In-app browser overlay — covers the messages area (this
+                `relative` wrapper) but not the composer, which is a sibling
+                below. Toggled from the header globe button. */}
+            <BrowserPane
+              open={browserOpen}
+              url={browserUrl}
+              onUrlChange={setBrowserUrl}
+              onClose={() => setBrowserOpen(false)}
+            />
           </div>
 
           {/* Input bar */}
