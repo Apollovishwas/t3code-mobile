@@ -42,6 +42,35 @@ const STRIP_RESPONSE_HEADERS = new Set([
   "cross-origin-resource-policy",
 ]);
 
+/** A self-contained explainer page shown when the upstream refuses to serve
+ *  the proxy (anti-bot challenge / empty body). Rendered inside the pane. */
+function blockedExplainerHtml(url: string, status: number): string {
+  const safeUrl = url.replace(/[<>&"]/g, (c) =>
+    c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === "&" ? "&amp;" : "&quot;",
+  );
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+    // keep full url
+  }
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0;font:14px/1.5 system-ui,-apple-system,sans-serif;color:#3f3f46;background:#fafafa;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
+    .card{max-width:32rem;text-align:center}
+    h1{font-size:16px;margin:0 0 8px;color:#18181b}
+    code{background:#e4e4e7;padding:1px 5px;border-radius:4px;font-size:12px}
+    p{margin:8px 0}
+    .muted{color:#71717a;font-size:13px}
+    @media(prefers-color-scheme:dark){body{background:#09090b;color:#a1a1aa}h1{color:#fafafa}code{background:#27272a}.muted{color:#71717a}}
+  </style></head><body><div class="card">
+    <h1>This site can't be previewed</h1>
+    <p><strong>${host}</strong> refused the preview request (HTTP ${status}, empty response).</p>
+    <p class="muted">Large commercial sites (Amazon, Google, banks, …) block server-side requests with anti-bot protection, so their pages can't load through the in-app browser.</p>
+    <p class="muted">The browser works best for <strong>your own dev server</strong> (localhost), docs, static sites, and internal tools.</p>
+    <p class="muted" style="margin-top:16px;word-break:break-all">${safeUrl}</p>
+  </div></body></html>`;
+}
+
 function isBlockedHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
   // Cloud instance metadata — the one SSRF target worth hard-blocking.
@@ -118,6 +147,20 @@ export const previewProxyRouteLayer = HttpRouter.add(
     const contentType = (upstream.headers.get("content-type") ?? "").toLowerCase();
     // The URL we actually ended up at (after redirects) is the rewrite base.
     const finalUrl = upstream.url || target.url;
+
+    // Anti-bot / challenge responses: many big sites (Amazon, Google, …)
+    // refuse server-side fetches and return an empty body (often 202/204/403).
+    // Rendering that gives the user a baffling white page — surface a clear
+    // explainer instead.
+    const looksBlocked =
+      buf.byteLength === 0 ||
+      (contentType.includes("html") && buf.byteLength < 64 && upstream.status >= 202);
+    if (looksBlocked) {
+      return HttpServerResponse.text(blockedExplainerHtml(target.url, upstream.status), {
+        status: 200,
+        contentType: "text/html; charset=utf-8",
+      });
+    }
 
     // Pass through the upstream headers minus the frame-blocking / hop ones.
     const headers: Record<string, string> = {};
